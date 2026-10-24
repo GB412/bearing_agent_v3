@@ -300,3 +300,23 @@ def test_r2_rejects_input_scoped_to_another_case(manager):
     assert any("different case" in error for error in (
         manager.readiness_for(d.design_id, "R2").conflicts
     ))
+
+
+
+def test_get_quantity_never_promotes_unverified_fixed_suggestion(manager):
+    d = manager.create_design()
+    d = manager.apply_patch(
+        d.design_id, 0,
+        {
+            "source": "agent",
+            "parameters": {
+                "journal_diameter": fixed(
+                    100, "mm", status=ParameterStatus.SUGGESTED
+                ),
+            },
+        },
+    )
+    with pytest.raises(StateManagerError, match="trusted source evidence"):
+        manager.get_quantity(
+            d.design_id, "journal_diameter", "mm", allow_suggested=True
+        )
