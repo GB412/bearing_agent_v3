@@ -76,7 +76,12 @@ def test_confirming_suggested_design_variable_preserves_role(manager):
             },
         },
     )
-    confirmed = manager.confirm_parameter(design.design_id, 1, "bearing_width", "designer")
+    confirmed = manager.confirm_parameter(
+        design.design_id,
+        1,
+        "bearing_width",
+        context=WriteContext(kind=WriterKind.USER, actor="designer"),
+    )
     record = confirmed.parameters["bearing_width"]
     assert record.role == ParameterRole.DESIGN_VARIABLE
     assert record.status == ParameterStatus.CONFIRMED
@@ -223,7 +228,7 @@ def test_derived_values_and_candidate_are_staled_after_diameter_change(manager):
                     candidate_id="c1",
                     version=1,
                     source_parameter_revisions={"journal_diameter": 1},
-                    precheck_status="PRECHECK_PASS",
+                    precheck_status="NOT_EVALUATED",
                 )
             ],
         },
