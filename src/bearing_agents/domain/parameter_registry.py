@@ -18,7 +18,6 @@ class ParameterSchema:
     dimension: str | None = None
     allowed_units: frozenset[str] = frozenset()
     allowed_values: frozenset[str] = frozenset()
-    required_for: frozenset[str] = frozenset()
     allowed_statuses: frozenset[ParameterStatus] = frozenset(ParameterStatus)
 
 
@@ -36,16 +35,15 @@ class ParameterSchemaRegistry:
 
     @staticmethod
     def _default_schemas() -> dict[str, ParameterSchema]:
-        def length(parameter_id: str, required: tuple[str, ...] = ()) -> ParameterSchema:
+        def length(parameter_id: str) -> ParameterSchema:
             return ParameterSchema(
                 parameter_id,
                 ParameterValueType.POSITIVE_NUMBER,
                 "length",
                 frozenset({"mm", "m"}),
-                required_for=frozenset(required),
             )
         return {
-            "journal_diameter": length("journal_diameter", ("R2",)),
+            "journal_diameter": length("journal_diameter"),
             "bearing_bore_diameter": length("bearing_bore_diameter"),
             "radial_clearance": length("radial_clearance"),
             "diametral_clearance": length("diametral_clearance"),
@@ -53,11 +51,10 @@ class ParameterSchemaRegistry:
             "installation_width_limit": length("installation_width_limit"),
             "load": ParameterSchema(
                 "load", ParameterValueType.POSITIVE_NUMBER, "force", frozenset({"N", "kN"}),
-                required_for=frozenset({"R2"}),
             ),
             "rotational_speed": ParameterSchema(
                 "rotational_speed", ParameterValueType.POSITIVE_NUMBER, "rotational_speed",
-                frozenset({"rpm"}), required_for=frozenset({"R2"}),
+                frozenset({"rpm"}),
             ),
             "surface_speed": ParameterSchema(
                 "surface_speed", ParameterValueType.POSITIVE_NUMBER, "speed", frozenset({"m/s"})
@@ -183,5 +180,3 @@ class ParameterSchemaRegistry:
         if record.value is not None:
             self.validate(parameter_id, record.value, record.unit)
 
-
-DEFAULT_PARAMETER_REGISTRY = ParameterSchemaRegistry()
