@@ -31,6 +31,7 @@ from bearing_agents.domain.enums import (
     SimulationStatus,
 )
 from bearing_agents.domain.events import StateEvent
+from bearing_agents.domain.operating_cases import OperatingCase
 from bearing_agents.domain.parameter_registry import (
     ParameterSchemaError,
     ParameterSchemaRegistry,
