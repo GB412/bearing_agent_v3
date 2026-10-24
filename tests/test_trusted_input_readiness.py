@@ -279,3 +279,24 @@ def test_get_quantity_refuses_unverified_legacy_fixed_input(manager):
     with pytest.raises(StateManagerError, match="no trusted source"):
         manager.get_quantity(d.design_id, "journal_diameter", "mm")
     assert not manager.readiness_for(d.design_id, "R2").ready
+
+
+
+def test_r2_rejects_input_scoped_to_another_case(manager):
+    d = manager.create_design()
+    parameters = required_parameters()
+    parameters["load"] = parameters["load"].model_copy(
+        update={"applies_to_case": "different-case"}
+    )
+    d = manager.apply_patch(
+        d.design_id, 0,
+        {
+            "source": "user", "parameters": parameters,
+            "operating_case_changes": [case()],
+        },
+        context=WriteContext(kind=WriterKind.USER, actor="engineer"),
+    )
+    assert not manager.readiness_for(d.design_id, "R2").ready
+    assert any("different case" in error for error in (
+        manager.readiness_for(d.design_id, "R2").conflicts
+    ))
