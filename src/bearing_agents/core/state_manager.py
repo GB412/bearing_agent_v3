@@ -576,6 +576,7 @@ class StateManager:
             actor=context.actor,
             occurred_at=datetime.now(UTC),
             details={
+                "writer_kind": context.kind.value,
                 "invalidated_objects": invalidated.invalidated_objects,
                 "confirmation_events": [
                     e.model_dump(mode="json") for e in confirmation_events
