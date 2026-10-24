@@ -74,5 +74,4 @@ def invalidate_dependents(state: DesignState, changed_fields: set[str]) -> Inval
         if changed_fields & set(task.dependencies):
             state.task_plan[index] = task.model_copy(update={"status": TaskStatus.STALE})
             invalidated.append(f"task:{task.id}")
-    state.stale_objects = sorted(set(state.stale_objects) | set(invalidated))
     return InvalidationResult(invalidated_objects=sorted(set(invalidated)))
