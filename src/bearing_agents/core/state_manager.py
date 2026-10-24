@@ -339,6 +339,12 @@ class StateManager:
                 record.confirmed_by = confirmation.confirmed_by
             if record.source is None:
                 record.source = patch.source
+            if context.kind == WriterKind.AGENT and trusted_ref is not None:
+                if record.source_ref is not None and record.source_ref != trusted_ref:
+                    raise StateManagerError(
+                        f"Source reference for {key!r} disagrees with trusted evidence"
+                    )
+                record.source_ref = trusted_ref
             # Provenance is computed at the trusted write boundary rather than
             # accepted from source/source_ref strings supplied by an Agent.
             record.verified_source_ref = (
