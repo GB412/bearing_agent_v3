@@ -4,7 +4,10 @@ from bearing_agents.core.readiness import StageRequirementRegistry
 from bearing_agents.core.state_manager import StateManager, StateManagerError
 from bearing_agents.domain.candidates import CandidateDesign
 from bearing_agents.domain.enums import (
-    ConfirmationStatus, ParameterRole, ParameterStatus, PrecheckStatus,
+    ConfirmationStatus,
+    ParameterRole,
+    ParameterStatus,
+    PrecheckStatus,
 )
 from bearing_agents.domain.parameters import ParameterRecord
 from bearing_agents.domain.write_context import WriteContext, WriterKind
