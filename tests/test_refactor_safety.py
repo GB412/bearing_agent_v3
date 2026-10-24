@@ -3,7 +3,6 @@
 import pytest
 
 from bearing_agents.core.state_manager import StateManager, StateManagerError
-from bearing_agents.domain.agent_protocols import StatePatch
 from bearing_agents.domain.enums import ParameterRole, ParameterStatus
 from bearing_agents.domain.parameters import ParameterRecord
 from bearing_agents.domain.proposals import ParameterChangeProposal
