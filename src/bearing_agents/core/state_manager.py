@@ -17,7 +17,11 @@ from bearing_agents.domain.agent_protocols import (
 from bearing_agents.domain.candidates import CandidateDesign
 from bearing_agents.domain.constraints import ConstraintRecord
 from bearing_agents.domain.enums import (
-    ConfirmationStatus, ParameterRole, ParameterStatus, PrecheckStatus, SimulationStatus,
+    ConfirmationStatus,
+    ParameterRole,
+    ParameterStatus,
+    PrecheckStatus,
+    SimulationStatus,
 )
 from bearing_agents.domain.events import StateEvent
 from bearing_agents.domain.parameter_registry import (
