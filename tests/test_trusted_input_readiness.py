@@ -71,7 +71,7 @@ def test_agent_supplied_source_ref_cannot_self_verify(manager):
             0,
             {
                 "source": "user",
-                "parameters": {
+                "parameter_changes": {
                     "journal_diameter": fixed(
                         100, "mm", source_ref="invented-user-message",
                         source="user",
@@ -170,7 +170,7 @@ def test_agent_cannot_inject_its_own_verified_source_field(manager):
         manager.apply_patch(
             d.design_id, 0,
             {"source": "agent",
-             "parameters": {"journal_diameter": fixed(
+             "parameter_changes": {"journal_diameter": fixed(
                  100, "mm", verified_source_ref="untrusted-claim"
              )}},
         )
@@ -191,7 +191,7 @@ def test_agent_claimed_source_must_match_attested_reference(manager):
             d.design_id, 0,
             {
                 "source": "agent",
-                "parameters": {
+                "parameter_changes": {
                     "journal_diameter": fixed(
                         100, "mm", source_ref="different-message"
                     )
@@ -209,7 +209,7 @@ def test_agent_cannot_change_verified_input_without_user_approval(manager):
         d.design_id, 0,
         {
             "source": "user",
-            "parameters": {"journal_diameter": fixed(100, "mm")},
+            "parameter_changes": {"journal_diameter": fixed(100, "mm")},
         },
         context=WriteContext(kind=WriterKind.USER, actor="engineer"),
     )
@@ -217,7 +217,7 @@ def test_agent_cannot_change_verified_input_without_user_approval(manager):
         manager.apply_patch(
             d.design_id, d.state_version,
             {"source": "agent",
-             "parameters": {
+             "parameter_changes": {
                  "journal_diameter": fixed(120, "mm", status=ParameterStatus.SUGGESTED)
              }},
         )
@@ -230,7 +230,7 @@ def test_agent_cannot_relabel_external_inputs_as_design_variables_for_r2(manager
         d.design_id, 0,
         {
             "source": "agent",
-            "parameters": {
+            "parameter_changes": {
                 key: record.model_copy(
                     update={
                         "role": ParameterRole.DESIGN_VARIABLE,
@@ -255,7 +255,7 @@ def test_get_quantity_rejects_provisional_design_value_by_default(manager):
         d.design_id, 0,
         {
             "source": "design_agent",
-            "parameters": {
+            "parameter_changes": {
                 "bearing_width": ParameterRecord(
                     value=60, unit="mm",
                     role=ParameterRole.DESIGN_VARIABLE,
@@ -309,7 +309,7 @@ def test_get_quantity_never_promotes_unverified_fixed_suggestion(manager):
         d.design_id, 0,
         {
             "source": "agent",
-            "parameters": {
+            "parameter_changes": {
                 "journal_diameter": fixed(
                     100, "mm", status=ParameterStatus.SUGGESTED
                 ),
