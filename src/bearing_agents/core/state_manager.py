@@ -29,6 +29,12 @@ from bearing_agents.domain.parameter_registry import (
     ParameterSchemaRegistry,
 )
 from bearing_agents.domain.parameters import ParameterRecord
+from bearing_agents.domain.proposals import (
+    ParameterChangeProposal,
+    ProposalDecision,
+    ProposalResolution,
+    ProposalStatus,
+)
 from bearing_agents.domain.state import DesignState
 from bearing_agents.domain.write_context import WriteContext, WriterKind
 from bearing_agents.infra.state_repository import SQLiteStateRepository
@@ -159,12 +165,52 @@ class StateManager:
         if duplicate_ids:
             raise StateManagerError(f"Duplicate parameter changes: {sorted(duplicate_ids)}")
         parameter_changes.update(patch.parameter_changes)
-        confirmation_ids = {event.parameter_id for event in patch.confirmation_events}
+        confirmation_events = list(patch.confirmation_events)
+        resolutions: dict[str, ProposalResolution] = {}
+        for resolution in patch.proposal_resolutions:
+            if context.kind != WriterKind.USER or not context.actor:
+                raise StateManagerError("Proposal resolution requires trusted USER context")
+            if resolution.proposal_id in resolutions:
+                raise StateManagerError("Duplicate proposal resolutions")
+            proposal = next(
+                (p for p in current.parameter_change_proposals
+                 if p.proposal_id == resolution.proposal_id),
+                None,
+            )
+            if proposal is None or proposal.status != ProposalStatus.PENDING:
+                raise StateManagerError("Proposal is missing or no longer pending")
+            prior = current.parameters.get(proposal.parameter_id)
+            if prior is None or prior.revision != proposal.base_revision:
+                raise VersionConflictError("Proposal is stale; input parameter changed")
+            if resolution.decision == ProposalDecision.APPROVE:
+                if proposal.parameter_id not in context.approved_parameter_ids:
+                    raise FixedInputWriteError(
+                        "Proposal approval requires explicit parameter permission"
+                    )
+                if proposal.parameter_id in parameter_changes:
+                    raise StateManagerError("Proposal conflicts with direct parameter change")
+                record = proposal.proposed_record.model_copy(
+                    deep=True,
+                    update={
+                        "status": ParameterStatus.CONFIRMED,
+                        "confirmed_by": context.actor,
+                    },
+                )
+                parameter_changes[proposal.parameter_id] = record
+                confirmation_events.append(
+                    ConfirmationEvent(
+                        parameter_id=proposal.parameter_id,
+                        confirmed_by=context.actor,
+                        reason=f"Approved proposal {proposal.proposal_id}",
+                    )
+                )
+            resolutions[resolution.proposal_id] = resolution
+        confirmation_ids = {event.parameter_id for event in confirmation_events}
         role_changes = {change.parameter_id: change for change in patch.role_changes}
-        if patch.confirmation_events:
+        if confirmation_events:
             if context.kind != WriterKind.USER:
                 raise StateManagerError("Confirmation events require a trusted user context")
-            if any(event.confirmed_by != context.actor for event in patch.confirmation_events):
+            if any(event.confirmed_by != context.actor for event in confirmation_events):
                 raise StateManagerError("Confirmation actor mismatch")
             if not confirmation_ids <= set(parameter_changes):
                 raise StateManagerError(
@@ -175,7 +221,7 @@ class StateManager:
                 for key in confirmation_ids
             ):
                 raise StateManagerError("Confirmation events require CONFIRMED parameter changes")
-            if len(confirmation_ids) != len(patch.confirmation_events):
+            if len(confirmation_ids) != len(confirmation_events):
                 raise StateManagerError("Duplicate confirmation events")
         if role_changes:
             if len(role_changes) != len(patch.role_changes):
@@ -204,6 +250,21 @@ class StateManager:
                 )
             if context.kind == WriterKind.AGENT and record.confirmed_by is not None:
                 raise StateManagerError("Agents cannot write user confirmation identity")
+            # A user-confirmed DESIGN_VARIABLE is as authoritative as fixed inputs.
+            # Agents may submit a ParameterChangeProposal instead of replacing it.
+            if old and old.status == ParameterStatus.CONFIRMED:
+                if context.kind != WriterKind.USER:
+                    raise FixedInputWriteError(
+                        f"Confirmed parameter {key!r} cannot be changed by an agent"
+                    )
+                if (
+                    old.value != record.value or old.unit != record.unit
+                    or old.role != record.role or old.status != record.status
+                    or old.applies_to_case != record.applies_to_case
+                ) and key not in context.approved_parameter_ids:
+                    raise FixedInputWriteError(
+                        f"Confirmed parameter {key!r} requires explicit user approval"
+                    )
             if record.status == ParameterStatus.CONFIRMED:
                 if context.kind != WriterKind.USER or key not in confirmation_ids:
                     raise StateManagerError(
@@ -237,7 +298,7 @@ class StateManager:
                     f"Modification of locked parameter {key!r} is not authorized"
                 )
             if record.status == ParameterStatus.CONFIRMED:
-                confirmation = next(e for e in patch.confirmation_events if e.parameter_id == key)
+                confirmation = next(e for e in confirmation_events if e.parameter_id == key)
                 if (
                     confirmation.confirmed_by != context.actor
                     or record.confirmed_by not in {None, confirmation.confirmed_by}
@@ -290,6 +351,13 @@ class StateManager:
             changed.add("constraints")
             changed.add(f"constraint:{constraint.id}")
         for operating_case in patch.operating_case_changes:
+            if operating_case.confirmed_by is not None and (
+                context.kind != WriterKind.USER
+                or operating_case.confirmed_by != context.actor
+            ):
+                raise StateManagerError(
+                    "Only the trusted user may confirm operating-case conditions"
+                )
             existing_case = next(
                 (
                     item
@@ -298,6 +366,15 @@ class StateManager:
                 ),
                 None,
             )
+            if existing_case and existing_case.confirmed_by is not None:
+                if context.kind != WriterKind.USER:
+                    raise StateManagerError(
+                        "Confirmed operating case cannot be overwritten by an agent"
+                    )
+                if operating_case.confirmed_by != context.actor:
+                    raise StateManagerError(
+                        "Changing a confirmed operating case requires user reconfirmation"
+                    )
             operating_case = operating_case.model_copy(
                 update={"revision": existing_case.revision + 1 if existing_case else 1}
             )
@@ -307,19 +384,82 @@ class StateManager:
             updated.operating_cases.append(operating_case)
             changed.add(f"operating_case:{operating_case.case_id}")
             changed.add("operating_cases")
+        if len(updated.operating_cases) > 1:
+            raise StateManagerError("V1 supports only one operating case")
         if patch.candidate_additions:
             changed.add("candidate_designs")
-        if patch.confirmation_events:
+        if confirmation_events:
             updated.confirmations.update(
                 {
                     event.parameter_id: {
                         "confirmed_by": event.confirmed_by,
                         "reason": event.reason,
                     }
-                    for event in patch.confirmation_events
+                    for event in confirmation_events
                 }
             )
             changed.add("confirmations")
+        # Pending proposals are inert: they never change authoritative parameters.
+        incoming_ids = [p.proposal_id for p in patch.parameter_change_proposals]
+        if len(set(incoming_ids)) != len(incoming_ids):
+            raise StateManagerError("Duplicate new proposal IDs")
+        known_ids = {p.proposal_id for p in updated.parameter_change_proposals}
+        for proposal in patch.parameter_change_proposals:
+            if proposal.proposal_id in known_ids:
+                raise StateManagerError("Duplicate proposal ID")
+            prior = current.parameters.get(proposal.parameter_id)
+            if prior is None or prior.revision != proposal.base_revision:
+                raise VersionConflictError("Proposal does not match the current parameter")
+            if (proposal.status != ProposalStatus.PENDING or proposal.resolved_by is not None
+                or proposal.resolved_at_version is not None):
+                raise StateManagerError("Proposals must start PENDING and unresolved")
+            if (proposal.proposed_record.role != prior.role
+                or proposal.proposed_record.status != ParameterStatus.SUGGESTED):
+                raise StateManagerError(
+                    "Proposals must preserve the parameter role and use SUGGESTED status"
+                )
+            try:
+                self.parameter_registry.validate_record(
+                    proposal.parameter_id, proposal.proposed_record
+                )
+            except ParameterSchemaError as exc:
+                raise StateManagerError(str(exc)) from exc
+            updated.parameter_change_proposals.append(
+                proposal.model_copy(
+                    update={
+                        "proposed_by": context.actor or patch.source,
+                    }
+                )
+            )
+            known_ids.add(proposal.proposal_id)
+            changed.add("parameter_change_proposals")
+        for index, proposal in enumerate(updated.parameter_change_proposals):
+            resolution = resolutions.get(proposal.proposal_id)
+            if resolution is not None:
+                new_status = (
+                    ProposalStatus.APPROVED
+                    if resolution.decision == ProposalDecision.APPROVE
+                    else ProposalStatus.REJECTED
+                )
+                updated.parameter_change_proposals[index] = proposal.model_copy(
+                    update={
+                        "status": new_status,
+                        "resolved_by": context.actor,
+                        "resolved_at_version": expected_version + 1,
+                    }
+                )
+                changed.add("parameter_change_proposals")
+            elif (
+                proposal.status == ProposalStatus.PENDING
+                and proposal.parameter_id in parameter_changes
+            ):
+                updated.parameter_change_proposals[index] = proposal.model_copy(
+                    update={
+                        "status": ProposalStatus.STALE,
+                        "resolved_at_version": expected_version + 1,
+                    }
+                )
+                changed.add("parameter_change_proposals")
         if patch.rule_set_change is not None:
             if context.kind == WriterKind.AGENT:
                 raise StateManagerError("Rule set changes require a trusted user or system context")
@@ -356,9 +496,12 @@ class StateManager:
             details={
                 "invalidated_objects": invalidated.invalidated_objects,
                 "confirmation_events": [
-                    e.model_dump(mode="json") for e in patch.confirmation_events
+                    e.model_dump(mode="json") for e in confirmation_events
                 ],
                 "role_changes": [e.model_dump(mode="json") for e in patch.role_changes],
+                "proposal_resolutions": [
+                    e.model_dump(mode="json") for e in patch.proposal_resolutions
+                ],
                 "rule_set_change": (
                     patch.rule_set_change.model_dump(mode="json") if patch.rule_set_change else None
                 ),
@@ -370,6 +513,33 @@ class StateManager:
         updated = self._validate_state(updated)
         self.repository.save(updated, expected_version)
         return updated
+
+    def resolve_parameter_proposal(
+        self,
+        design_id: str,
+        expected_version: int,
+        proposal_id: str,
+        *,
+        approve: bool,
+        context: WriteContext,
+    ) -> DesignState:
+        if context.kind != WriterKind.USER or not context.actor:
+            raise StateManagerError("Proposal resolution requires trusted USER context")
+        return self.apply_patch(
+            design_id,
+            expected_version,
+            StatePatch(
+                source="user",
+                actor=context.actor,
+                proposal_resolutions=[
+                    ProposalResolution(
+                        proposal_id=proposal_id,
+                        decision=ProposalDecision.APPROVE if approve else ProposalDecision.REJECT,
+                    )
+                ],
+            ),
+            context=context,
+        )
 
     def confirm_parameter(
         self,
@@ -510,6 +680,8 @@ class StateManager:
             state = DesignState.model_validate(state.model_dump())
             for key, record in state.parameters.items():
                 self.parameter_registry.validate_record(key, record)
+            if len(state.operating_cases) > 1:
+                raise StateManagerError("V1 supports only one operating case")
             for candidate in state.candidate_designs:
                 for key, record in candidate.parameters.items():
                     self.parameter_registry.validate_record(key, record)
