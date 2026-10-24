@@ -9,6 +9,7 @@ from bearing_agents.domain.enums import IssueStatus, SimulationStatus
 from bearing_agents.domain.events import StateEvent
 from bearing_agents.domain.operating_cases import AssumptionRecord, OperatingCase
 from bearing_agents.domain.parameters import ParameterRecord
+from bearing_agents.domain.proposals import ParameterChangeProposal
 
 
 class IssueRecord(BaseModel):
@@ -36,6 +37,7 @@ class DesignState(BaseModel):
     constraints: list[ConstraintRecord] = Field(default_factory=list)
     assumptions: list[AssumptionRecord] = Field(default_factory=list)
     candidate_designs: list[CandidateDesign] = Field(default_factory=list)
+    parameter_change_proposals: list[ParameterChangeProposal] = Field(default_factory=list)
     issues: list[IssueRecord] = Field(default_factory=list)
     task_plan: list[TaskRecord] = Field(default_factory=list)
     knowledge_rule_set_version: str | None = None

@@ -13,6 +13,7 @@ from bearing_agents.domain.enums import (
 from bearing_agents.domain.events import StateEvent
 from bearing_agents.domain.operating_cases import OperatingCase
 from bearing_agents.domain.parameters import ParameterRecord
+from bearing_agents.domain.proposals import ParameterChangeProposal, ProposalResolution
 
 
 class TaskRecord(BaseModel):
@@ -45,6 +46,8 @@ class StatePatch(BaseModel):
 
     parameters: dict[str, ParameterRecord] = Field(default_factory=dict)
     parameter_changes: dict[str, ParameterRecord] = Field(default_factory=dict)
+    parameter_change_proposals: list[ParameterChangeProposal] = Field(default_factory=list)
+    proposal_resolutions: list[ProposalResolution] = Field(default_factory=list)
     constraint_changes: list[ConstraintRecord] = Field(default_factory=list)
     operating_case_changes: list[OperatingCase] = Field(default_factory=list)
     candidate_additions: list[CandidateDesign] = Field(default_factory=list)

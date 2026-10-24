@@ -81,26 +81,27 @@ def readiness_for(
         except ParameterSchemaError as exc:
             conflicts.append(f"parameter:{parameter_id}: {exc}")
 
-    steady_cases = [case for case in state.operating_cases if case.is_steady_state]
-    if not steady_cases:
-        conflicts.append("operating_case:one steady-state case is required")
+    # V1 supports exactly one explicitly identified steady-state operating case.
+    # Neither "unknown" nor the existence of one steady case among several is sufficient.
+    if len(state.operating_cases) != 1:
+        conflicts.append("operating_case:exactly one case is required for V1")
     else:
+        case = state.operating_cases[0]
+        if case.is_steady_state is not True:
+            conflicts.append("operating_case:steady-state operation must be explicit")
         required_refs = {
             "journal_diameter_ref": "journal_diameter",
             "load_ref": "load",
             "speed_ref": "rotational_speed",
         }
-        # R2 checks every case claimed to be within this single-case scope;
-        # incorrectly linked cases must not be silently ignored.
-        for case in steady_cases:
-            for field, expected_parameter in required_refs.items():
-                reference = getattr(case, field)
-                if reference is None:
-                    conflicts.append(f"operating_case:{case.case_id}:{field} is required")
-                elif reference != expected_parameter or reference not in state.parameters:
-                    conflicts.append(
-                        f"operating_case:{case.case_id}:{field} does not resolve to "
-                        f"{expected_parameter}"
-                    )
+        for field, expected_parameter in required_refs.items():
+            reference = getattr(case, field)
+            if reference is None:
+                conflicts.append(f"operating_case:{case.case_id}:{field} is required")
+            elif reference != expected_parameter or reference not in state.parameters:
+                conflicts.append(
+                    f"operating_case:{case.case_id}:{field} does not resolve to "
+                    f"{expected_parameter}"
+                )
 
     return ReadinessResult(stage, not missing and not conflicts, missing, conflicts, False)

@@ -9,7 +9,9 @@ class OperatingCase(BaseModel):
     load_ref: str | None = None
     speed_ref: str | None = None
     load_direction: str | None = None
-    is_steady_state: bool = True
+    # An unknown operating regime must never be assumed to be steady-state.
+    is_steady_state: bool | None = None
+    confirmed_by: str | None = None
     description: str | None = None
     revision: int = Field(default=0, ge=0)
 
