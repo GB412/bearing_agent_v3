@@ -37,6 +37,12 @@ from bearing_agents.domain.proposals import (
 )
 from bearing_agents.domain.state import DesignState
 from bearing_agents.domain.write_context import WriteContext, WriterKind
+from bearing_agents.core.write_guards import (
+    agent_constraint_violation,
+    candidate_parameter_violation,
+    proposed_parameter_violation,
+    authoritative_parameter_violation,
+)
 
 
 class StateManagerError(ValueError):
@@ -229,6 +235,9 @@ class StateManager:
                 )
             record.parameter_id = key
             old = updated.parameters.get(key)
+            violation = authoritative_parameter_violation(record, context.kind)
+            if violation:
+                raise StateManagerError(f"Parameter {key!r}: {violation}")
             trusted_ref = context.verified_parameter_refs.get(key)
             if trusted_ref is None and context.kind == WriterKind.USER:
                 # A directly authenticated user input is trusted by the API boundary.
@@ -352,13 +361,9 @@ class StateManager:
             existing = next(
                 (item for item in updated.constraints if item.id == constraint.id), None
             )
-            if context.kind == WriterKind.AGENT and (
-                constraint.severity.value == "HARD"
-                or constraint.origin.strip().casefold() == "user"
-            ):
-                raise StateManagerError(
-                    "Agents may submit only non-user-origin SOFT or INFO constraints"
-                )
+            violation = agent_constraint_violation(constraint, context.kind)
+            if violation:
+                raise StateManagerError(violation)
             requires_approval = bool(
                 existing and (existing.approved or existing.severity.value == "HARD")
             )
@@ -488,6 +493,9 @@ class StateManager:
             if (proposal.status != ProposalStatus.PENDING or proposal.resolved_by is not None
                 or proposal.resolved_at_version is not None):
                 raise StateManagerError("Proposals must start PENDING and unresolved")
+            violation = proposed_parameter_violation(proposal.proposed_record)
+            if violation:
+                raise StateManagerError(f"Proposal {proposal.proposal_id!r}: {violation}")
             if (proposal.proposed_record.role != prior.role
                 or proposal.proposed_record.status != ParameterStatus.SUGGESTED):
                 raise StateManagerError(
@@ -554,19 +562,9 @@ class StateManager:
                     "New candidates must start PENDING, NOT_EVALUATED, and NOT_REQUESTED"
                 )
             for parameter_id, record in candidate.parameters.items():
-                if (
-                    record.status == ParameterStatus.CONFIRMED
-                    or record.confirmed_by is not None
-                    or record.verified_source_ref is not None
-                ):
-                    raise StateManagerError(
-                        f"Candidate parameter {parameter_id!r} cannot claim user confirmation "
-                        "or trusted source evidence; confirm inputs in DesignState first"
-                    )
-                if context.kind == WriterKind.AGENT and record.status == ParameterStatus.PROVIDED:
-                    raise StateManagerError(
-                        f"Agent candidate parameter {parameter_id!r} cannot claim PROVIDED status"
-                    )
+                violation = candidate_parameter_violation(record, context.kind)
+                if violation:
+                    raise StateManagerError(f"Candidate parameter {parameter_id!r}: {violation}")
             if any(existing.candidate_id == candidate.candidate_id
                    and existing.version == candidate.version
                    for existing in updated.candidate_designs):
