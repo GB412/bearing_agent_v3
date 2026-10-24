@@ -723,8 +723,9 @@ class StateManager:
             raise StateManagerError(f"Parameter {parameter_id!r} has no usable quantity")
         if (
             record.role in {ParameterRole.FIXED_INPUT, ParameterRole.HARD_CONSTRAINT}
-            and record.status == ParameterStatus.PROVIDED
-            and not record.verified_source_ref
+            and not (record.verified_source_ref or (
+                record.status == ParameterStatus.CONFIRMED and record.confirmed_by
+            ))
         ):
             raise StateManagerError(
                 f"External input {parameter_id!r} has no trusted source evidence"
