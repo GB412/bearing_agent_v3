@@ -55,3 +55,40 @@ silently coerced. Backfill a pre-upgrade current snapshot on the first managed w
    marks prior candidate prechecks stale.
 5. These safeguards do not assert completed simulation or final validation.
    They are PR-01 domain invariants, not a generic auth service.
+
+
+## PR-01 verified external-input boundary (R2)
+
+- `ParameterStatus.PROVIDED` is not self-authorizing: an Agent's
+  `StatePatch.source="user"`, `ParameterRecord.source_ref`, or
+  `OperatingCase.is_steady_state=True` alone never establishes trusted input.
+- `StateManager` stamps the domain `verified_source_ref` on a parameter or
+  case only from a trusted `WriteContext`. A USER context represents a direct
+  authenticated user edit and generates an audit-bound user-input reference.
+  For extraction from a user message, an untrusted Agent sends its parsed
+  `StatePatch`; the **trusted application boundary** must separately verify
+  the quoted value and steady-state assertion against the actual stored
+  message, and then populate `verified_parameter_refs` and
+  `verified_case_refs` with that source message ID. The Agent cannot set
+  `verified_source_ref` directly through `StatePatch`.
+- Agent-provided fixed inputs and hard constraints cannot enter
+  `PROVIDED` without the trusted source assertion. Unverified suggestions
+  remain `SUGGESTED`. Verification applies to each specific parameter/case,
+  not to an entire message indiscriminately.
+- R2 now checks correct fixed-input roles, acceptable status, trusted provenance
+  or user confirmation, exactly one explicitly steady case with trusted
+  evidence, valid parameter references, and matching case scope. R2 does NOT
+  assert engineering fitness, approved material limits, or completed simulation.
+- `get_quantity()` does not return provisional `SUGGESTED` parameters by
+  default. Callers doing explicitly exploratory calculations may opt in with
+  `allow_suggested=True`; unverified fixed external inputs remain disallowed.
+- `WriteContext` remains an **in-process authority assertion**, not a
+  cryptographic credential or an authentication implementation. In PR-02,
+  `Dispatcher/PolicyGuard` must mint it outside the LLM/Agent result, and
+  API/UI layers must verify user sessions and source-message bindings. Never
+  deserialize `WriteContext` from an LLM response. A claimed
+  `StatePatch.source` is only descriptive; the trusted `writer_kind` is
+  recorded separately in the state event details.
+- Previously persisted `PROVIDED` records lacking a verified source now fail
+  R2 closed. Do not backfill provenance from self-reported `source` strings;
+  require a verified source or user confirmation when migrating legacy data.
