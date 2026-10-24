@@ -159,6 +159,7 @@ def test_agent_cannot_self_authorize_fixed_input_change(manager):
         design.design_id,
         0,
         {"source": "user", "parameters": {"journal_diameter": parameter(100)}},
+        context=WriteContext(kind=WriterKind.USER, actor="designer"),
     )
     with pytest.raises(FixedInputWriteError, match="user-sourced"):
         manager.apply_patch(
