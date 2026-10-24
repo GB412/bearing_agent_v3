@@ -9,11 +9,17 @@ from bearing_agents.core.readiness import (
     StageRequirementRegistry,
     readiness_for,
 )
+from bearing_agents.core.write_guards import (
+    agent_constraint_violation,
+    authoritative_parameter_violation,
+    candidate_parameter_violation,
+    proposed_parameter_violation,
+)
 from bearing_agents.domain.agent_protocols import (
-    StateRepository,
     ConfirmationEvent,
     RoleChange,
     StatePatch,
+    StateRepository,
 )
 from bearing_agents.domain.candidates import CandidateDesign
 from bearing_agents.domain.constraints import ConstraintRecord
@@ -37,12 +43,6 @@ from bearing_agents.domain.proposals import (
 )
 from bearing_agents.domain.state import DesignState
 from bearing_agents.domain.write_context import WriteContext, WriterKind
-from bearing_agents.core.write_guards import (
-    agent_constraint_violation,
-    candidate_parameter_violation,
-    proposed_parameter_violation,
-    authoritative_parameter_violation,
-)
 
 
 class StateManagerError(ValueError):
