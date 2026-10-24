@@ -112,21 +112,28 @@ def test_patch_records_versions_sources_and_event_history(manager):
 def test_old_state_patch_is_rejected(manager):
     design = manager.create_design()
     manager.apply_patch(
-        design.design_id, 0, {"source": "user", "parameter_changes": {"journal_diameter": parameter(100)}},
+        design.design_id,
+        0,
+        {"source": "user", "parameter_changes": {"journal_diameter": parameter(100)}},
         context=WriteContext(kind=WriterKind.USER, actor="designer"),
     )
     with pytest.raises(VersionConflictError):
         manager.apply_patch(
             design.design_id,
             0,
-            {"source": "user", "parameter_changes": {"rotational_speed": parameter(1500, unit="rpm")}},
+            {
+                "source": "user",
+                "parameter_changes": {"rotational_speed": parameter(1500, unit="rpm")},
+            },
         )
 
 
 def test_fixed_input_modification_requires_explicit_authorization(manager):
     design = manager.create_design()
     manager.apply_patch(
-        design.design_id, 0, {"source": "user", "parameter_changes": {"journal_diameter": parameter(100)}},
+        design.design_id,
+        0,
+        {"source": "user", "parameter_changes": {"journal_diameter": parameter(100)}},
         context=WriteContext(kind=WriterKind.USER, actor="designer"),
     )
     with pytest.raises(FixedInputWriteError):
@@ -177,7 +184,10 @@ def test_unknown_unit_is_rejected(manager, unit):
         manager.apply_patch(
             design.design_id,
             0,
-            {"source": "user", "parameter_changes": {"journal_diameter": parameter(100, unit=unit)}},
+            {
+                "source": "user",
+                "parameter_changes": {"journal_diameter": parameter(100, unit=unit)},
+            },
             context=WriteContext(kind=WriterKind.USER, actor="designer"),
         )
 
@@ -205,7 +215,9 @@ def test_missing_value_cannot_be_coerced_to_zero_and_value_requires_unit(manager
 def test_derived_values_and_candidate_are_staled_after_diameter_change(manager):
     design = manager.create_design()
     manager.apply_patch(
-        design.design_id, 0, {"source": "user", "parameter_changes": {"journal_diameter": parameter(100)}},
+        design.design_id,
+        0,
+        {"source": "user", "parameter_changes": {"journal_diameter": parameter(100)}},
         context=WriteContext(kind=WriterKind.USER, actor="designer"),
     )
     seeded = manager.apply_patch(
