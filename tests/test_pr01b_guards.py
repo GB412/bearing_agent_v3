@@ -43,7 +43,7 @@ def test_required_unusable_load_is_not_ready(manager, status):
     d = manager.create_design()
     d = manager.apply_patch(d.design_id, 0, {
         "source": "user",
-        "parameters": {
+        "parameter_changes": {
             "load": ParameterRecord(
                 role=ParameterRole.FIXED_INPUT, status=status,
                 value=12000 if status == ParameterStatus.SUGGESTED else None,
@@ -60,7 +60,7 @@ def test_confirm_requires_trusted_context(manager):
     d = manager.create_design()
     d = manager.apply_patch(d.design_id, 0, {
         "source": "agent",
-        "parameters": {
+        "parameter_changes": {
             "bearing_width": ParameterRecord(
                 value=60, unit="mm", role=ParameterRole.DESIGN_VARIABLE,
                 status=ParameterStatus.SUGGESTED,
@@ -84,7 +84,7 @@ def test_role_change_requires_trusted_context(manager):
     d = manager.create_design()
     d = manager.apply_patch(d.design_id, 0, {
         "source": "agent",
-        "parameters": {
+        "parameter_changes": {
             "bearing_width": ParameterRecord(
                 value=60, unit="mm", role=ParameterRole.DESIGN_VARIABLE,
                 status=ParameterStatus.SUGGESTED,
@@ -130,7 +130,7 @@ def test_untrusted_claimed_actor_is_not_audited_as_authenticated_user(manager):
     d = manager.create_design()
     updated = manager.apply_patch(d.design_id, 0, {
         "source": "agent", "actor": "claimed-designer",
-        "parameters": {
+        "parameter_changes": {
             "bearing_width": ParameterRecord(
                 value=100, unit="mm", role=ParameterRole.DESIGN_VARIABLE,
                 status=ParameterStatus.SUGGESTED,

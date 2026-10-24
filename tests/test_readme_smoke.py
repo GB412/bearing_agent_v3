@@ -13,7 +13,7 @@ def test_readme_minimal_example_runs(tmp_path):
         expected_version=design.state_version,
         patch={
             "source": "user",
-            "parameters": {
+            "parameter_changes": {
                 "journal_diameter": ParameterRecord(
                     value=100,
                     unit="mm",

@@ -9,10 +9,17 @@ from bearing_agents.core.readiness import (
     StageRequirementRegistry,
     readiness_for,
 )
+from bearing_agents.core.write_guards import (
+    agent_constraint_violation,
+    authoritative_parameter_violation,
+    candidate_parameter_violation,
+    proposed_parameter_violation,
+)
 from bearing_agents.domain.agent_protocols import (
     ConfirmationEvent,
     RoleChange,
     StatePatch,
+    StateRepository,
 )
 from bearing_agents.domain.candidates import CandidateDesign
 from bearing_agents.domain.constraints import ConstraintRecord
@@ -24,6 +31,7 @@ from bearing_agents.domain.enums import (
     SimulationStatus,
 )
 from bearing_agents.domain.events import StateEvent
+from bearing_agents.domain.operating_cases import OperatingCase
 from bearing_agents.domain.parameter_registry import (
     ParameterSchemaError,
     ParameterSchemaRegistry,
@@ -36,7 +44,6 @@ from bearing_agents.domain.proposals import (
 )
 from bearing_agents.domain.state import DesignState
 from bearing_agents.domain.write_context import WriteContext, WriterKind
-from bearing_agents.infra.state_repository import SQLiteStateRepository
 
 
 class StateManagerError(ValueError):
@@ -103,7 +110,7 @@ def _snapshot_candidate_dependencies(
 class StateManager:
     def __init__(
         self,
-        repository: SQLiteStateRepository,
+        repository: StateRepository,
         *,
         parameter_registry: ParameterSchemaRegistry | None = None,
         stage_registry: StageRequirementRegistry | None = None,
@@ -124,6 +131,155 @@ class StateManager:
         if state is None:
             raise KeyError(f"Unknown design_id: {design_id}")
         return state
+
+    def _apply_constraint_changes(
+        self, updated: DesignState, constraints: list[ConstraintRecord],
+        context: WriteContext, changed: set[str],
+    ) -> None:
+        for constraint in constraints:
+            self._validate_constraint(constraint)
+            existing = next(
+                (item for item in updated.constraints if item.id == constraint.id), None
+            )
+            violation = agent_constraint_violation(constraint, context.kind)
+            if violation:
+                raise StateManagerError(violation)
+            requires_approval = bool(
+                existing and (existing.approved or existing.severity.value == "HARD")
+            )
+            if constraint.approved and (
+                context.kind != WriterKind.USER
+                or constraint.id not in context.approved_constraint_ids
+            ):
+                raise StateManagerError(
+                    f"Constraint {constraint.id!r} approval requires a trusted user context"
+                )
+            if existing and existing != constraint and (
+                context.kind != WriterKind.USER
+                or (requires_approval and constraint.id not in context.approved_constraint_ids)
+            ):
+                raise StateManagerError(
+                    f"Constraint {constraint.id!r} requires user approval to change"
+                )
+            if existing:
+                constraint = constraint.model_copy(update={"revision": existing.revision + 1})
+                updated.constraints = [
+                    constraint if item.id == constraint.id else item for item in updated.constraints
+                ]
+            else:
+                updated.constraints.append(
+                    constraint.model_copy(update={"revision": 1})
+                )
+            changed.add("constraints")
+            changed.add(f"constraint:{constraint.id}")
+
+
+    def _apply_operating_case_changes(
+        self, updated: DesignState, cases: list[OperatingCase],
+        context: WriteContext, design_id: str, expected_version: int,
+        changed: set[str],
+    ) -> None:
+        for operating_case in cases:
+            if operating_case.verified_source_ref is not None:
+                existing_verified = next(
+                    (item for item in updated.operating_cases
+                     if item.case_id == operating_case.case_id),
+                    None,
+                )
+                if (existing_verified is None or
+                    operating_case.verified_source_ref !=
+                    existing_verified.verified_source_ref):
+                    raise StateManagerError(
+                        "Verified operating-case source cannot come from the patch"
+                    )
+            if operating_case.confirmed_by is not None and (
+                context.kind != WriterKind.USER
+                or operating_case.confirmed_by != context.actor
+            ):
+                raise StateManagerError(
+                    "Only the trusted user may confirm operating-case conditions"
+                )
+            existing_case = next(
+                (
+                    item
+                    for item in updated.operating_cases
+                    if item.case_id == operating_case.case_id
+                ),
+                None,
+            )
+            if existing_case and existing_case.confirmed_by is not None:
+                if context.kind != WriterKind.USER:
+                    raise StateManagerError(
+                        "Confirmed operating case cannot be overwritten by an agent"
+                    )
+                if operating_case.confirmed_by != context.actor:
+                    raise StateManagerError(
+                        "Changing a confirmed operating case requires user reconfirmation"
+                    )
+            trusted_case_ref = context.verified_case_refs.get(operating_case.case_id)
+            if trusted_case_ref is None and context.kind == WriterKind.USER:
+                trusted_case_ref = (
+                    f"user-case:{design_id}:{expected_version + 1}:{operating_case.case_id}"
+                )
+            same_conditions = bool(
+                existing_case
+                and existing_case.journal_diameter_ref == operating_case.journal_diameter_ref
+                and existing_case.load_ref == operating_case.load_ref
+                and existing_case.speed_ref == operating_case.speed_ref
+                and existing_case.load_direction == operating_case.load_direction
+                and existing_case.is_steady_state == operating_case.is_steady_state
+            )
+            if (existing_case and existing_case.verified_source_ref
+                and not same_conditions
+                and context.kind != WriterKind.USER):
+                raise StateManagerError(
+                    "Verified operating case cannot be overwritten by an agent"
+                )
+            operating_case = operating_case.model_copy(
+                update={
+                    "revision": existing_case.revision + 1 if existing_case else 1,
+                    "verified_source_ref": (
+                        trusted_case_ref
+                        or (existing_case.verified_source_ref
+                            if same_conditions else None)
+                    ),
+                }
+            )
+            updated.operating_cases = [
+                item for item in updated.operating_cases if item.case_id != operating_case.case_id
+            ]
+            updated.operating_cases.append(operating_case)
+            changed.add(f"operating_case:{operating_case.case_id}")
+            changed.add("operating_cases")
+        if len(updated.operating_cases) > 1:
+            raise StateManagerError("V1 supports only one operating case")
+
+
+    def _append_candidates(
+        self, updated: DesignState, candidates: list[CandidateDesign],
+        context: WriteContext,
+    ) -> None:
+        # New candidates are evaluated against this patch's final inputs. They must
+        # not be invalidated by the very change that creates them.
+        for candidate in candidates:
+            if (candidate.confirmation_status != ConfirmationStatus.PENDING
+                or candidate.precheck_status != PrecheckStatus.NOT_EVALUATED
+                or candidate.simulation_status != SimulationStatus.NOT_REQUESTED
+                or candidate.precheck_history):
+                raise StateManagerError(
+                    "New candidates must start PENDING, NOT_EVALUATED, and NOT_REQUESTED"
+                )
+            for parameter_id, record in candidate.parameters.items():
+                violation = candidate_parameter_violation(record, context.kind)
+                if violation:
+                    raise StateManagerError(f"Candidate parameter {parameter_id!r}: {violation}")
+            if any(existing.candidate_id == candidate.candidate_id
+                   and existing.version == candidate.version
+                   for existing in updated.candidate_designs):
+                raise StateManagerError("Duplicate candidate version")
+            updated.candidate_designs.append(
+                _snapshot_candidate_dependencies(candidate, updated)
+            )
 
     def apply_patch(
         self,
@@ -147,23 +303,9 @@ class StateManager:
             raise VersionConflictError(
                 f"Expected version {expected_version}, current version is {current.state_version}"
             )
-        if patch.state_updates:
-            raise StateManagerError(
-                "state_updates is closed; use typed parameter_changes, constraint_changes, "
-                "operating_case_changes, candidate_additions, confirmation_events, or role_changes"
-            )
-        if patch.authorized_fixed_input_ids - context.approved_parameter_ids:
-            raise FixedInputWriteError(
-                "Patch approvals must come from trusted WriteContext; "
-                "user-sourced authorization is required"
-            )
         updated = current.model_copy(deep=True)
         changed: set[str] = set()
-        parameter_changes = dict(patch.parameters)
-        duplicate_ids = set(parameter_changes) & set(patch.parameter_changes)
-        if duplicate_ids:
-            raise StateManagerError(f"Duplicate parameter changes: {sorted(duplicate_ids)}")
-        parameter_changes.update(patch.parameter_changes)
+        parameter_changes = dict(patch.parameter_changes)
         confirmation_events = list(patch.confirmation_events)
         resolutions: dict[str, ProposalResolution] = {}
         for resolution in patch.proposal_resolutions:
@@ -243,6 +385,9 @@ class StateManager:
                 )
             record.parameter_id = key
             old = updated.parameters.get(key)
+            violation = authoritative_parameter_violation(record, context.kind)
+            if violation:
+                raise StateManagerError(f"Parameter {key!r}: {violation}")
             trusted_ref = context.verified_parameter_refs.get(key)
             if trusted_ref is None and context.kind == WriterKind.USER:
                 # A directly authenticated user input is trusted by the API boundary.
@@ -356,137 +501,16 @@ class StateManager:
             except ParameterSchemaError as exc:
                 raise StateManagerError(str(exc)) from exc
             record.revision = (old.revision + 1) if old else 1
-            if key not in confirmation_ids and key in updated.confirmations:
-                del updated.confirmations[key]
-                changed.add("confirmations")
             updated.parameters[key] = record
             changed.add(key)
-        for constraint in patch.constraint_changes:
-            self._validate_constraint(constraint)
-            existing = next(
-                (item for item in updated.constraints if item.id == constraint.id), None
-            )
-            if context.kind == WriterKind.AGENT and (
-                constraint.severity.value == "HARD"
-                or constraint.origin.strip().casefold() == "user"
-            ):
-                raise StateManagerError(
-                    "Agents may submit only non-user-origin SOFT or INFO constraints"
-                )
-            requires_approval = bool(
-                existing and (existing.approved or existing.severity.value == "HARD")
-            )
-            if constraint.approved and (
-                context.kind != WriterKind.USER
-                or constraint.id not in context.approved_constraint_ids
-            ):
-                raise StateManagerError(
-                    f"Constraint {constraint.id!r} approval requires a trusted user context"
-                )
-            if existing and existing != constraint and (
-                context.kind != WriterKind.USER
-                or (requires_approval and constraint.id not in context.approved_constraint_ids)
-            ):
-                raise StateManagerError(
-                    f"Constraint {constraint.id!r} requires user approval to change"
-                )
-            if existing:
-                constraint = constraint.model_copy(update={"revision": existing.revision + 1})
-                updated.constraints = [
-                    constraint if item.id == constraint.id else item for item in updated.constraints
-                ]
-            else:
-                updated.constraints.append(
-                    constraint.model_copy(update={"revision": 1})
-                )
-            changed.add("constraints")
-            changed.add(f"constraint:{constraint.id}")
-        for operating_case in patch.operating_case_changes:
-            if operating_case.verified_source_ref is not None:
-                existing_verified = next(
-                    (item for item in updated.operating_cases
-                     if item.case_id == operating_case.case_id),
-                    None,
-                )
-                if (existing_verified is None or
-                    operating_case.verified_source_ref !=
-                    existing_verified.verified_source_ref):
-                    raise StateManagerError(
-                        "Verified operating-case source cannot come from the patch"
-                    )
-            if operating_case.confirmed_by is not None and (
-                context.kind != WriterKind.USER
-                or operating_case.confirmed_by != context.actor
-            ):
-                raise StateManagerError(
-                    "Only the trusted user may confirm operating-case conditions"
-                )
-            existing_case = next(
-                (
-                    item
-                    for item in updated.operating_cases
-                    if item.case_id == operating_case.case_id
-                ),
-                None,
-            )
-            if existing_case and existing_case.confirmed_by is not None:
-                if context.kind != WriterKind.USER:
-                    raise StateManagerError(
-                        "Confirmed operating case cannot be overwritten by an agent"
-                    )
-                if operating_case.confirmed_by != context.actor:
-                    raise StateManagerError(
-                        "Changing a confirmed operating case requires user reconfirmation"
-                    )
-            trusted_case_ref = context.verified_case_refs.get(operating_case.case_id)
-            if trusted_case_ref is None and context.kind == WriterKind.USER:
-                trusted_case_ref = (
-                    f"user-case:{design_id}:{expected_version + 1}:{operating_case.case_id}"
-                )
-            same_conditions = bool(
-                existing_case
-                and existing_case.journal_diameter_ref == operating_case.journal_diameter_ref
-                and existing_case.load_ref == operating_case.load_ref
-                and existing_case.speed_ref == operating_case.speed_ref
-                and existing_case.load_direction == operating_case.load_direction
-                and existing_case.is_steady_state == operating_case.is_steady_state
-            )
-            if (existing_case and existing_case.verified_source_ref
-                and not same_conditions
-                and context.kind != WriterKind.USER):
-                raise StateManagerError(
-                    "Verified operating case cannot be overwritten by an agent"
-                )
-            operating_case = operating_case.model_copy(
-                update={
-                    "revision": existing_case.revision + 1 if existing_case else 1,
-                    "verified_source_ref": (
-                        trusted_case_ref
-                        or (existing_case.verified_source_ref
-                            if same_conditions else None)
-                    ),
-                }
-            )
-            updated.operating_cases = [
-                item for item in updated.operating_cases if item.case_id != operating_case.case_id
-            ]
-            updated.operating_cases.append(operating_case)
-            changed.add(f"operating_case:{operating_case.case_id}")
-            changed.add("operating_cases")
-        if len(updated.operating_cases) > 1:
-            raise StateManagerError("V1 supports only one operating case")
+        self._apply_constraint_changes(updated, patch.constraint_changes, context, changed)
+        self._apply_operating_case_changes(
+            updated, patch.operating_case_changes, context, design_id,
+            expected_version, changed,
+        )
         if patch.candidate_additions:
             changed.add("candidate_designs")
         if confirmation_events:
-            updated.confirmations.update(
-                {
-                    event.parameter_id: {
-                        "confirmed_by": event.confirmed_by,
-                        "reason": event.reason,
-                    }
-                    for event in confirmation_events
-                }
-            )
             changed.add("confirmations")
         # Pending proposals are inert: they never change authoritative parameters.
         incoming_ids = [p.proposal_id for p in patch.parameter_change_proposals]
@@ -502,6 +526,9 @@ class StateManager:
             if (proposal.status != ProposalStatus.PENDING or proposal.resolved_by is not None
                 or proposal.resolved_at_version is not None):
                 raise StateManagerError("Proposals must start PENDING and unresolved")
+            violation = proposed_parameter_violation(proposal.proposed_record)
+            if violation:
+                raise StateManagerError(f"Proposal {proposal.proposal_id!r}: {violation}")
             if (proposal.proposed_record.role != prior.role
                 or proposal.proposed_record.status != ParameterStatus.SUGGESTED):
                 raise StateManagerError(
@@ -557,37 +584,7 @@ class StateManager:
         next_version = expected_version + 1
         updated.state_version = next_version
         invalidated = invalidate_dependents(updated, changed)
-        # New candidates are evaluated against this patch's final inputs. They must
-        # not be invalidated by the very change that creates them.
-        for candidate in patch.candidate_additions:
-            if (candidate.confirmation_status != ConfirmationStatus.PENDING
-                or candidate.precheck_status != PrecheckStatus.NOT_EVALUATED
-                or candidate.simulation_status != SimulationStatus.NOT_REQUESTED
-                or candidate.precheck_history):
-                raise StateManagerError(
-                    "New candidates must start PENDING, NOT_EVALUATED, and NOT_REQUESTED"
-                )
-            for parameter_id, record in candidate.parameters.items():
-                if (
-                    record.status == ParameterStatus.CONFIRMED
-                    or record.confirmed_by is not None
-                    or record.verified_source_ref is not None
-                ):
-                    raise StateManagerError(
-                        f"Candidate parameter {parameter_id!r} cannot claim user confirmation "
-                        "or trusted source evidence; confirm inputs in DesignState first"
-                    )
-                if context.kind == WriterKind.AGENT and record.status == ParameterStatus.PROVIDED:
-                    raise StateManagerError(
-                        f"Agent candidate parameter {parameter_id!r} cannot claim PROVIDED status"
-                    )
-            if any(existing.candidate_id == candidate.candidate_id
-                   and existing.version == candidate.version
-                   for existing in updated.candidate_designs):
-                raise StateManagerError("Duplicate candidate version")
-            updated.candidate_designs.append(
-                _snapshot_candidate_dependencies(candidate, updated)
-            )
+        self._append_candidates(updated, patch.candidate_additions, context)
         event = StateEvent(
             design_id=design_id,
             from_version=expected_version,
@@ -613,7 +610,6 @@ class StateManager:
         )
         updated.state_version = next_version
         updated.event_history.append(event)
-        updated.event_log_refs.append(event.event_id)
         updated = self._validate_state(updated)
         self.repository.save(updated, expected_version)
         return updated
@@ -769,15 +765,7 @@ class StateManager:
         )
 
     def list_missing_for(self, design_id: str, stage: str) -> list[ParameterRecord]:
-        state = self.get_design(design_id)
-        readiness = self.readiness_for(design_id, stage)
-        if not readiness.not_configured:
-            return readiness.missing
-        return [
-            record
-            for record in state.parameters.values()
-            if record.status == ParameterStatus.MISSING and stage in record.required_for
-        ]
+        return self.readiness_for(design_id, stage).missing
 
     def _validate_constraint(self, constraint: ConstraintRecord) -> None:
         if self.parameter_registry.get(constraint.parameter) is None:
@@ -833,7 +821,6 @@ class StateManager:
             details={"invalidated_objects": result.invalidated_objects},
         )
         updated.event_history.append(event)
-        updated.event_log_refs.append(event.event_id)
         updated = self._validate_state(updated)
         self.repository.save(updated, expected_version)
         return updated, result

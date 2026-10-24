@@ -1,6 +1,4 @@
-from typing import Any
-
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from bearing_agents.domain.agent_protocols import TaskRecord
 from bearing_agents.domain.candidates import CandidateDesign
@@ -41,8 +39,19 @@ class DesignState(BaseModel):
     issues: list[IssueRecord] = Field(default_factory=list)
     task_plan: list[TaskRecord] = Field(default_factory=list)
     knowledge_rule_set_version: str | None = None
-    confirmations: dict[str, Any] = Field(default_factory=dict)
     simulation_status: SimulationStatus = SimulationStatus.NOT_REQUESTED
-    event_log_refs: list[str] = Field(default_factory=list)
-    stale_objects: list[str] = Field(default_factory=list)
     event_history: list[StateEvent] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_cached_indexes(cls, data: object) -> object:
+        """Old JSON state may contain redundant materialized indexes.
+
+        Current parameter confirmation lives on ParameterRecord; the event log
+        preserves decisions, and the status of each object records staleness.
+        """
+        if isinstance(data, dict):
+            data = dict(data)
+            for obsolete in ("confirmations", "event_log_refs", "stale_objects"):
+                data.pop(obsolete, None)
+        return data

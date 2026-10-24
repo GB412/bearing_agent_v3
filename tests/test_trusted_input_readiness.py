@@ -56,7 +56,7 @@ def test_agent_cannot_fabricate_provided_external_inputs(manager):
             {
                 "source": "user",
                 "actor": "pretend-human",
-                "parameters": required_parameters(),
+                "parameter_changes": required_parameters(),
                 "operating_case_changes": [case()],
             },
         )
@@ -71,7 +71,7 @@ def test_agent_supplied_source_ref_cannot_self_verify(manager):
             0,
             {
                 "source": "user",
-                "parameters": {
+                "parameter_changes": {
                     "journal_diameter": fixed(
                         100, "mm", source_ref="invented-user-message",
                         source="user",
@@ -89,7 +89,7 @@ def test_agent_can_suggest_inputs_but_r2_stays_not_ready(manager):
     }
     d = manager.apply_patch(
         d.design_id, d.state_version,
-        {"source": "requirement_agent", "parameters": proposals,
+        {"source": "requirement_agent", "parameter_changes": proposals,
          "operating_case_changes": [case()]},
     )
     readiness = manager.readiness_for(d.design_id, "R2")
@@ -104,7 +104,7 @@ def test_trusted_user_can_directly_provide_inputs_without_reconfirmation(manager
         d.design_id, 0,
         {
             "source": "user",
-            "parameters": required_parameters(),
+            "parameter_changes": required_parameters(),
             "operating_case_changes": [case()],
         },
         context=WriteContext(kind=WriterKind.USER, actor="engineer"),
@@ -128,7 +128,7 @@ def test_verified_user_message_may_be_extracted_by_agent(manager):
         d.design_id, 0,
         {
             "source": "requirement_agent",
-            "parameters": required_parameters(),
+            "parameter_changes": required_parameters(),
             "operating_case_changes": [case()],
         },
         context=WriteContext(
@@ -149,7 +149,7 @@ def test_verified_parameters_with_unverified_steady_case_are_not_ready(manager):
         d.design_id, 0,
         {
             "source": "requirement_agent",
-            "parameters": required_parameters(),
+            "parameter_changes": required_parameters(),
             "operating_case_changes": [case()],
         },
         context=WriteContext(
@@ -170,7 +170,7 @@ def test_agent_cannot_inject_its_own_verified_source_field(manager):
         manager.apply_patch(
             d.design_id, 0,
             {"source": "agent",
-             "parameters": {"journal_diameter": fixed(
+             "parameter_changes": {"journal_diameter": fixed(
                  100, "mm", verified_source_ref="untrusted-claim"
              )}},
         )
@@ -191,7 +191,7 @@ def test_agent_claimed_source_must_match_attested_reference(manager):
             d.design_id, 0,
             {
                 "source": "agent",
-                "parameters": {
+                "parameter_changes": {
                     "journal_diameter": fixed(
                         100, "mm", source_ref="different-message"
                     )
@@ -209,7 +209,7 @@ def test_agent_cannot_change_verified_input_without_user_approval(manager):
         d.design_id, 0,
         {
             "source": "user",
-            "parameters": {"journal_diameter": fixed(100, "mm")},
+            "parameter_changes": {"journal_diameter": fixed(100, "mm")},
         },
         context=WriteContext(kind=WriterKind.USER, actor="engineer"),
     )
@@ -217,7 +217,7 @@ def test_agent_cannot_change_verified_input_without_user_approval(manager):
         manager.apply_patch(
             d.design_id, d.state_version,
             {"source": "agent",
-             "parameters": {
+             "parameter_changes": {
                  "journal_diameter": fixed(120, "mm", status=ParameterStatus.SUGGESTED)
              }},
         )
@@ -226,28 +226,25 @@ def test_agent_cannot_change_verified_input_without_user_approval(manager):
 
 def test_agent_cannot_relabel_external_inputs_as_design_variables_for_r2(manager):
     d = manager.create_design()
-    d = manager.apply_patch(
-        d.design_id, 0,
-        {
-            "source": "agent",
-            "parameters": {
-                key: record.model_copy(
-                    update={
-                        "role": ParameterRole.DESIGN_VARIABLE,
-                        "status": ParameterStatus.PROVIDED,
-                    }
-                )
-                for key, record in required_parameters().items()
+    with pytest.raises(StateManagerError, match="must remain SUGGESTED"):
+        manager.apply_patch(
+            d.design_id, 0,
+            {
+                "source": "agent",
+                "parameter_changes": {
+                    key: record.model_copy(
+                        update={
+                            "role": ParameterRole.DESIGN_VARIABLE,
+                            "status": ParameterStatus.PROVIDED,
+                        }
+                    )
+                    for key, record in required_parameters().items()
+                },
+                "operating_case_changes": [case()],
             },
-            "operating_case_changes": [case()],
-        },
-        context=WriteContext(verified_case_refs={"c1": "message-14"}),
-    )
-    assert not manager.readiness_for(d.design_id, "R2").ready
-    assert any("fixed external input" in s for s in manager.readiness_for(
-        d.design_id, "R2"
-    ).conflicts)
-
+            context=WriteContext(verified_case_refs={"c1": "message-14"}),
+        )
+    assert manager.get_design(d.design_id).state_version == 0
 
 def test_get_quantity_rejects_provisional_design_value_by_default(manager):
     d = manager.create_design()
@@ -255,7 +252,7 @@ def test_get_quantity_rejects_provisional_design_value_by_default(manager):
         d.design_id, 0,
         {
             "source": "design_agent",
-            "parameters": {
+            "parameter_changes": {
                 "bearing_width": ParameterRecord(
                     value=60, unit="mm",
                     role=ParameterRole.DESIGN_VARIABLE,
@@ -291,7 +288,7 @@ def test_r2_rejects_input_scoped_to_another_case(manager):
     d = manager.apply_patch(
         d.design_id, 0,
         {
-            "source": "user", "parameters": parameters,
+            "source": "user", "parameter_changes": parameters,
             "operating_case_changes": [case()],
         },
         context=WriteContext(kind=WriterKind.USER, actor="engineer"),
@@ -309,7 +306,7 @@ def test_get_quantity_never_promotes_unverified_fixed_suggestion(manager):
         d.design_id, 0,
         {
             "source": "agent",
-            "parameters": {
+            "parameter_changes": {
                 "journal_diameter": fixed(
                     100, "mm", status=ParameterStatus.SUGGESTED
                 ),

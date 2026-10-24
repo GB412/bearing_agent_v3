@@ -38,17 +38,17 @@ def test_state_updates_cannot_replace_locked_parameter(manager):
     manager.apply_patch(
         design.design_id,
         0,
-        {"source": "user", "parameters": {"journal_diameter": record(100, "mm")}},
+        {"source": "user", "parameter_changes": {"journal_diameter": record(100, "mm")}},
         context=user_context(),
     )
-    with pytest.raises(StateManagerError, match="state_updates is closed"):
+    with pytest.raises(StateManagerError, match="Extra inputs are not permitted"):
         manager.apply_patch(
             design.design_id,
             1,
             {
                 "source": "agent",
                 "state_updates": {
-                    "parameters": {"journal_diameter": record(1, "mm")}
+                    "parameter_changes": {"journal_diameter": record(1, "mm")}
                 },
             },
         )
@@ -61,7 +61,7 @@ def test_installation_limit_change_stales_passed_candidate(manager):
         0,
         {
             "source": "user",
-            "parameters": {
+            "parameter_changes": {
                 "bearing_width": record(60, "mm", ParameterRole.DESIGN_VARIABLE),
                 "installation_width_limit": record(80, "mm", ParameterRole.HARD_CONSTRAINT),
             },
@@ -88,10 +88,9 @@ def test_installation_limit_change_stales_passed_candidate(manager):
         seeded.state_version,
         {
             "source": "user",
-            "parameters": {
+            "parameter_changes": {
                 "installation_width_limit": record(50, "mm", ParameterRole.HARD_CONSTRAINT)
             },
-            "authorized_fixed_input_ids": ["installation_width_limit"],
         },
         context=user_context(
             approved_parameter_ids=frozenset({"installation_width_limit"})
@@ -109,7 +108,7 @@ def test_new_candidate_captures_current_dependency_snapshot(manager):
         0,
         {
             "source": "agent",
-            "parameters": {"journal_diameter": record(100, "mm")},
+            "parameter_changes": {"journal_diameter": record(100, "mm")},
             "candidate_additions": [
                 CandidateDesign(
                     candidate_id="c1",
@@ -142,7 +141,7 @@ def test_category_values_and_numeric_schema_reject_bool_and_bad_units(manager):
         0,
         {
             "source": "user",
-            "parameters": {
+            "parameter_changes": {
                 "material": record("铜合金", "1", ParameterRole.HARD_CONSTRAINT)
             },
         },
@@ -153,14 +152,14 @@ def test_category_values_and_numeric_schema_reject_bool_and_bad_units(manager):
         manager.apply_patch(
             design.design_id,
             1,
-            {"source": "user", "parameters": {"journal_diameter": record(True, "mm")}},
+            {"source": "user", "parameter_changes": {"journal_diameter": record(True, "mm")}},
             context=user_context(),
         )
     with pytest.raises(StateManagerError, match="dimension|allowed"):
         manager.apply_patch(
             design.design_id,
             1,
-            {"source": "user", "parameters": {"journal_diameter": record(100, "N")}},
+            {"source": "user", "parameter_changes": {"journal_diameter": record(100, "N")}},
             context=user_context(),
         )
 
@@ -172,7 +171,7 @@ def test_agent_cannot_confirm_but_user_command_records_event_and_role_change(man
         0,
         {
             "source": "agent",
-            "parameters": {
+            "parameter_changes": {
                 "bearing_width": record(
                     60, "mm", ParameterRole.DESIGN_VARIABLE, ParameterStatus.SUGGESTED
                 )
@@ -185,7 +184,7 @@ def test_agent_cannot_confirm_but_user_command_records_event_and_role_change(man
             suggested.state_version,
             {
                 "source": "agent",
-                "parameters": {
+                "parameter_changes": {
                     "bearing_width": record(
                         60, "mm", ParameterRole.DESIGN_VARIABLE, ParameterStatus.CONFIRMED
                     )
@@ -215,7 +214,7 @@ def test_agent_confirmation_event_is_rejected(manager):
             0,
             {
                 "source": "agent",
-                "parameters": {
+                "parameter_changes": {
                     "bearing_width": record(
                         60, "mm", ParameterRole.DESIGN_VARIABLE, ParameterStatus.CONFIRMED
                     )
@@ -295,7 +294,7 @@ def test_empty_design_is_not_ready_and_width_can_remain_design_variable(manager)
         0,
         {
             "source": "agent",
-            "parameters": {
+            "parameter_changes": {
                 "bearing_width": record(
                     None, "mm", ParameterRole.DESIGN_VARIABLE, ParameterStatus.MISSING
                 )
@@ -313,7 +312,7 @@ def test_parameter_id_must_match_key(manager):
             0,
             {
                 "source": "agent",
-                "parameters": {
+                "parameter_changes": {
                     "journal_diameter": ParameterRecord(
                         parameter_id="load",
                         value=100,

@@ -1,4 +1,4 @@
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -10,10 +10,12 @@ from bearing_agents.domain.enums import (
     RuleStatus,
     TaskStatus,
 )
-from bearing_agents.domain.events import StateEvent
 from bearing_agents.domain.operating_cases import OperatingCase
 from bearing_agents.domain.parameters import ParameterRecord
 from bearing_agents.domain.proposals import ParameterChangeProposal, ProposalResolution
+
+if TYPE_CHECKING:
+    from bearing_agents.domain.state import DesignState
 
 
 class TaskRecord(BaseModel):
@@ -44,7 +46,6 @@ class PlanDecision(BaseModel):
 class StatePatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    parameters: dict[str, ParameterRecord] = Field(default_factory=dict)
     parameter_changes: dict[str, ParameterRecord] = Field(default_factory=dict)
     parameter_change_proposals: list[ParameterChangeProposal] = Field(default_factory=list)
     proposal_resolutions: list[ProposalResolution] = Field(default_factory=list)
@@ -54,10 +55,8 @@ class StatePatch(BaseModel):
     confirmation_events: list["ConfirmationEvent"] = Field(default_factory=list)
     role_changes: list["RoleChange"] = Field(default_factory=list)
     rule_set_change: "RuleSetChange | None" = None
-    state_updates: dict[str, Any] = Field(default_factory=dict)
     source: str
     actor: str | None = None
-    authorized_fixed_input_ids: set[str] = Field(default_factory=set)
 
 
 class ConfirmationEvent(BaseModel):
@@ -111,15 +110,11 @@ class RuleRecord(BaseModel):
 
 
 class StateRepository(Protocol):
-    def create(self, state: Any) -> None: ...
+    def create(self, state: "DesignState") -> None: ...
 
-    def get(self, design_id: str) -> Any | None: ...
+    def get(self, design_id: str) -> "DesignState | None": ...
 
-    def save(self, state: Any, expected_version: int) -> None: ...
-
-
-class EventRepository(Protocol):
-    def append(self, event: StateEvent) -> None: ...
+    def save(self, state: "DesignState", expected_version: int) -> None: ...
 
 
 class Agent(Protocol):

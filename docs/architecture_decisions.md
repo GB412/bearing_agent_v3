@@ -92,3 +92,35 @@ silently coerced. Backfill a pre-upgrade current snapshot on the first managed w
 - Previously persisted `PROVIDED` records lacking a verified source now fail
   R2 closed. Do not backfill provenance from self-reported `source` strings;
   require a verified source or user confirmation when migrating legacy data.
+
+
+## PR-01 lean-state consolidation before LangGraph
+
+- `StatePatch.parameter_changes` is now the single parameter-write entrypoint.
+  The old `parameters` alias, disabled `state_updates`, and user-supplied
+  `authorized_fixed_input_ids` have been removed. Only a trusted
+  `WriteContext.approved_parameter_ids` may grant authorization. This is an
+  intentional **caller API break**; migrate old clients to parameter_changes.
+- The authoritative current confirmation is `ParameterRecord.status/confirmed_by`;
+  confirmations and changes remain auditable in `event_history`.
+  `event_log_refs`, `confirmations`, and `stale_objects` are no longer
+  persisted as duplicate caches. `DesignState` accepts and discards these
+  obsolete keys when reading older SQLite JSON payloads. It does not modify
+  or delete original SQLite databases during migration.
+- Stage completeness is configured in `StageRequirementRegistry` only;
+  `ParameterSchemaRegistry` concerns value types/units/status validity.
+  Legacy `ParameterRecord.required_for` is read but ignored. The R2
+  steady-state gate is only for R2; custom stage templates may be registered.
+- Pure write guards in `core/write_guards.py` cover authority markers on
+  candidate and proposal parameters, Agent-created constraints and
+  unauthorized PROVIDED design/derived quantities. Derived PROVIDED quantities
+  must be committed by a trusted SYSTEM calculator context.
+- `StateRepository` is a typed repository protocol, implemented by SQLite.
+  The unused EventRepository protocol and duplicate default registry instance
+  were removed. No second DB, permission server, or Agent runtime was added.
+- LangGraph in PR-02 owns ephemeral orchestration/checkpoints while
+  DesignState owns bearing engineering facts and durable design events.
+  A dispatcher must never construct USER/SYSTEM WriteContext from Agent text.
+- Candidate input dependency maps are currently conservative and legacy-compatible.
+  Precise consumed-dependency snapshots should be tackled together with
+  PR-02 replanning, not by dropping dependencies without equivalent tracing.

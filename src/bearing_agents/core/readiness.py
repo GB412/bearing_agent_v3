@@ -36,6 +36,11 @@ class StageRequirementRegistry:
     def requirements_for(self, stage: str) -> tuple[str, ...] | None:
         return self._requirements.get(stage)
 
+    def register(self, stage: str, parameter_ids: tuple[str, ...]) -> None:
+        if not stage.strip() or not parameter_ids:
+            raise ValueError("Stage must have a name and at least one required parameter")
+        self._requirements[stage] = tuple(parameter_ids)
+
 
 def readiness_for(
     state: DesignState,
@@ -64,7 +69,6 @@ def readiness_for(
                     parameter_id=parameter_id,
                     role=ParameterRole.FIXED_INPUT,
                     status=ParameterStatus.MISSING,
-                    required_for=[stage],
                 )
             )
             continue
@@ -91,6 +95,11 @@ def readiness_for(
             parameter_registry.validate_record(parameter_id, record)
         except ParameterSchemaError as exc:
             conflicts.append(f"parameter:{parameter_id}: {exc}")
+
+    # Stage-specific parameter lists do not automatically imply R2's operating
+    # regime requirement. Only R2 currently has the single-steady-case gate.
+    if stage != "R2":
+        return ReadinessResult(stage, not missing and not conflicts, missing, conflicts, False)
 
     # V1 supports exactly one explicitly identified steady-state operating case.
     # Neither "unknown" nor the existence of one steady case among several is sufficient.
