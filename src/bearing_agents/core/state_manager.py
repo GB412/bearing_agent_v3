@@ -706,15 +706,32 @@ class StateManager:
             context=context,
         )
 
-    def get_quantity(self, design_id: str, parameter_id: str, target_unit: str) -> float:
+    def get_quantity(
+        self, design_id: str, parameter_id: str, target_unit: str,
+        *, allow_suggested: bool = False,
+    ) -> float:
+        """Read a valid quantity; opt in to provisional design suggestions explicitly."""
         record = self.get_design(design_id).parameters.get(parameter_id)
+        valid_statuses = {ParameterStatus.PROVIDED, ParameterStatus.CONFIRMED}
+        if allow_suggested:
+            valid_statuses.add(ParameterStatus.SUGGESTED)
         if (
             record is None or record.value is None or record.unit is None
-            or record.status not in {
-                ParameterStatus.PROVIDED, ParameterStatus.SUGGESTED, ParameterStatus.CONFIRMED
-            }
+            or record.status not in valid_statuses
         ):
             raise StateManagerError(f"Parameter {parameter_id!r} has no usable quantity")
+        if (
+            record.role in {ParameterRole.FIXED_INPUT, ParameterRole.HARD_CONSTRAINT}
+            and record.status == ParameterStatus.PROVIDED
+            and not record.verified_source_ref
+        ):
+            raise StateManagerError(
+                f"External input {parameter_id!r} has no trusted source evidence"
+            )
+        if record.status == ParameterStatus.CONFIRMED and not record.confirmed_by:
+            raise StateManagerError(
+                f"Parameter {parameter_id!r} lacks trusted user confirmation"
+            )
         try:
             return self.parameter_registry.convert(
                 parameter_id, record.value, record.unit, target_unit
