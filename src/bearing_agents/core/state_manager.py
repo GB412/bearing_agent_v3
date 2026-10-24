@@ -351,9 +351,6 @@ class StateManager:
             except ParameterSchemaError as exc:
                 raise StateManagerError(str(exc)) from exc
             record.revision = (old.revision + 1) if old else 1
-            if key not in confirmation_ids and key in updated.confirmations:
-                del updated.confirmations[key]
-                changed.add("confirmations")
             updated.parameters[key] = record
             changed.add(key)
         for constraint in patch.constraint_changes:
@@ -469,15 +466,6 @@ class StateManager:
         if patch.candidate_additions:
             changed.add("candidate_designs")
         if confirmation_events:
-            updated.confirmations.update(
-                {
-                    event.parameter_id: {
-                        "confirmed_by": event.confirmed_by,
-                        "reason": event.reason,
-                    }
-                    for event in confirmation_events
-                }
-            )
             changed.add("confirmations")
         # Pending proposals are inert: they never change authoritative parameters.
         incoming_ids = [p.proposal_id for p in patch.parameter_change_proposals]
@@ -597,7 +585,6 @@ class StateManager:
         )
         updated.state_version = next_version
         updated.event_history.append(event)
-        updated.event_log_refs.append(event.event_id)
         updated = self._validate_state(updated)
         self.repository.save(updated, expected_version)
         return updated
@@ -753,15 +740,7 @@ class StateManager:
         )
 
     def list_missing_for(self, design_id: str, stage: str) -> list[ParameterRecord]:
-        state = self.get_design(design_id)
-        readiness = self.readiness_for(design_id, stage)
-        if not readiness.not_configured:
-            return readiness.missing
-        return [
-            record
-            for record in state.parameters.values()
-            if record.status == ParameterStatus.MISSING and stage in record.required_for
-        ]
+        return self.readiness_for(design_id, stage).missing
 
     def _validate_constraint(self, constraint: ConstraintRecord) -> None:
         if self.parameter_registry.get(constraint.parameter) is None:
@@ -817,7 +796,6 @@ class StateManager:
             details={"invalidated_objects": result.invalidated_objects},
         )
         updated.event_history.append(event)
-        updated.event_log_refs.append(event.event_id)
         updated = self._validate_state(updated)
         self.repository.save(updated, expected_version)
         return updated, result
