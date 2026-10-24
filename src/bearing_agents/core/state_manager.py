@@ -16,7 +16,9 @@ from bearing_agents.domain.agent_protocols import (
 )
 from bearing_agents.domain.candidates import CandidateDesign
 from bearing_agents.domain.constraints import ConstraintRecord
-from bearing_agents.domain.enums import ParameterRole, ParameterStatus
+from bearing_agents.domain.enums import (
+    ConfirmationStatus, ParameterRole, ParameterStatus, PrecheckStatus, SimulationStatus,
+)
 from bearing_agents.domain.events import StateEvent
 from bearing_agents.domain.parameter_registry import (
     ParameterSchemaError,
@@ -322,17 +324,28 @@ class StateManager:
         invalidated = invalidate_dependents(updated, changed)
         # New candidates are evaluated against this patch's final inputs. They must
         # not be invalidated by the very change that creates them.
-        updated.candidate_designs.extend(
-            _snapshot_candidate_dependencies(candidate, updated)
-            for candidate in patch.candidate_additions
-        )
+        for candidate in patch.candidate_additions:
+            if (candidate.confirmation_status != ConfirmationStatus.PENDING
+                or candidate.precheck_status != PrecheckStatus.NOT_EVALUATED
+                or candidate.simulation_status != SimulationStatus.NOT_REQUESTED
+                or candidate.precheck_history):
+                raise StateManagerError(
+                    "New candidates must start PENDING, NOT_EVALUATED, and NOT_REQUESTED"
+                )
+            if any(existing.candidate_id == candidate.candidate_id
+                   and existing.version == candidate.version
+                   for existing in updated.candidate_designs):
+                raise StateManagerError("Duplicate candidate version")
+            updated.candidate_designs.append(
+                _snapshot_candidate_dependencies(candidate, updated)
+            )
         event = StateEvent(
             design_id=design_id,
             from_version=expected_version,
             to_version=next_version,
             changed_fields=sorted(changed),
             source=patch.source,
-            actor=context.actor or patch.actor,
+            actor=context.actor,
             occurred_at=datetime.now(UTC),
             details={
                 "invalidated_objects": invalidated.invalidated_objects,
@@ -355,9 +368,13 @@ class StateManager:
         design_id: str,
         expected_version: int,
         parameter_id: str,
-        actor: str,
+        *,
+        context: WriteContext,
         reason: str | None = None,
     ) -> DesignState:
+        if context.kind != WriterKind.USER or not context.actor:
+            raise StateManagerError("Trusted USER context required for confirmation")
+        actor = context.actor
         current = self.get_design(design_id)
         record = current.parameters.get(parameter_id)
         if record is None:
@@ -377,7 +394,7 @@ class StateManager:
                     ConfirmationEvent(parameter_id=parameter_id, confirmed_by=actor, reason=reason)
                 ],
             ),
-            context=WriteContext(kind=WriterKind.USER, actor=actor),
+            context=context,
         )
 
     def change_parameter_role(
@@ -386,8 +403,12 @@ class StateManager:
         expected_version: int,
         parameter_id: str,
         to_role: ParameterRole,
-        actor: str,
+        *,
+        context: WriteContext,
     ) -> DesignState:
+        if context.kind != WriterKind.USER or not context.actor:
+            raise StateManagerError("Trusted USER context required for role changes")
+        actor = context.actor
         current = self.get_design(design_id)
         record = current.parameters.get(parameter_id)
         if record is None:
@@ -422,10 +443,7 @@ class StateManager:
                     )
                 ],
             ),
-            context=WriteContext(
-                kind=WriterKind.USER, actor=actor,
-                approved_parameter_ids=frozenset({parameter_id}),
-            ),
+            context=context,
         )
 
     def get_quantity(self, design_id: str, parameter_id: str, target_unit: str) -> float:
