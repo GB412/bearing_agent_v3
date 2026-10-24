@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from bearing_agents.domain.enums import ParameterRole, ParameterStatus
 
@@ -20,8 +20,15 @@ class ParameterRecord(BaseModel):
     applies_to_case: str | None = None
     confirmed_by: str | None = None
     revision: int = Field(default=0, ge=0)
-    required_for: list[str] = Field(default_factory=list)
     invalidated_by: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def discard_legacy_stage_hint(cls, data: object) -> object:
+        if isinstance(data, dict):
+            data = dict(data)
+            data.pop("required_for", None)
+        return data
 
     @field_validator("parameter_id")
     @classmethod
