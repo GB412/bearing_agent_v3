@@ -265,6 +265,131 @@ def test_agent_cannot_set_confirmation_identity_or_override_confirmed_case(manag
     assert changed.operating_cases[0].revision == 2
 
 
+@pytest.mark.parametrize(
+    "record",
+    [
+        ParameterRecord(
+            value=60,
+            unit="mm",
+            role=ParameterRole.DESIGN_VARIABLE,
+            status=ParameterStatus.CONFIRMED,
+            confirmed_by="designer",
+        ),
+        ParameterRecord(
+            value=60,
+            unit="mm",
+            role=ParameterRole.DESIGN_VARIABLE,
+            status=ParameterStatus.SUGGESTED,
+            confirmed_by="designer",
+        ),
+        ParameterRecord(
+            value=60,
+            unit="mm",
+            role=ParameterRole.DESIGN_VARIABLE,
+            status=ParameterStatus.SUGGESTED,
+            verified_source_ref="forged-source",
+        ),
+    ],
+)
+def test_new_candidate_cannot_embed_trusted_parameter_claims(manager, record):
+    design = manager.create_design()
+    with pytest.raises(StateManagerError, match="cannot claim user confirmation"):
+        manager.apply_patch(
+            design.design_id,
+            design.state_version,
+            {
+                "source": "design_agent",
+                "candidate_additions": [
+                    CandidateDesign(
+                        candidate_id="candidate-1",
+                        version=1,
+                        parameters={"bearing_width": record},
+                    )
+                ],
+            },
+        )
+    unchanged = manager.get_design(design.design_id)
+    assert unchanged.state_version == design.state_version
+    assert unchanged.candidate_designs == []
+
+
+def test_agent_candidate_cannot_claim_provided_external_parameter(manager):
+    design = manager.create_design()
+    with pytest.raises(StateManagerError, match="cannot claim PROVIDED status"):
+        manager.apply_patch(
+            design.design_id,
+            design.state_version,
+            {
+                "source": "design_agent",
+                "candidate_additions": [
+                    CandidateDesign(
+                        candidate_id="candidate-1",
+                        version=1,
+                        parameters={
+                            "load": ParameterRecord(
+                                value=12000,
+                                unit="N",
+                                role=ParameterRole.FIXED_INPUT,
+                                status=ParameterStatus.PROVIDED,
+                            )
+                        },
+                    )
+                ],
+            },
+        )
+    assert manager.get_design(design.design_id).candidate_designs == []
+
+
+@pytest.mark.parametrize(
+    "severity, origin",
+    [("HARD", "agent"), ("SOFT", "user"), ("INFO", "USER")],
+)
+def test_agent_cannot_add_hard_or_user_origin_constraint(manager, severity, origin):
+    from bearing_agents.domain.constraints import ConstraintRecord
+    from bearing_agents.domain.enums import ConstraintOperator, ConstraintSeverity
+
+    design = manager.create_design()
+    constraint = ConstraintRecord(
+        id="agent-constraint",
+        parameter="bearing_width",
+        operator=ConstraintOperator.LE,
+        target=60,
+        unit="mm",
+        severity=ConstraintSeverity(severity),
+        origin=origin,
+    )
+    with pytest.raises(StateManagerError, match="non-user-origin SOFT or INFO"):
+        manager.apply_patch(
+            design.design_id,
+            design.state_version,
+            {"source": "design_agent", "constraint_changes": [constraint]},
+        )
+    assert manager.get_design(design.design_id).constraints == []
+
+
+def test_agent_can_submit_soft_constraint_as_agent_suggestion(manager):
+    from bearing_agents.domain.constraints import ConstraintRecord
+    from bearing_agents.domain.enums import ConstraintOperator, ConstraintSeverity
+
+    design = manager.create_design()
+    constraint = ConstraintRecord(
+        id="agent-suggestion",
+        parameter="bearing_width",
+        operator=ConstraintOperator.LE,
+        target=60,
+        unit="mm",
+        severity=ConstraintSeverity.SOFT,
+        origin="design_agent",
+    )
+    updated = manager.apply_patch(
+        design.design_id,
+        design.state_version,
+        {"source": "design_agent", "constraint_changes": [constraint]},
+    )
+    assert updated.constraints[0].severity.value == "SOFT"
+    assert updated.constraints[0].origin == "design_agent"
+
+
 def test_case_change_invalidates_precheck(manager):
     d = manager.create_design()
     d = manager.apply_patch(

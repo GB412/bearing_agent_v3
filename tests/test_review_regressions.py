@@ -233,7 +233,7 @@ def test_hard_constraint_change_requires_explicit_user_approval(manager):
         design.design_id,
         0,
         {
-            "source": "agent",
+            "source": "user",
             "constraint_changes": [
                 ConstraintRecord(
                     id="width-limit",
@@ -243,9 +243,11 @@ def test_hard_constraint_change_requires_explicit_user_approval(manager):
                     unit="mm",
                     severity=ConstraintSeverity.HARD,
                     origin="user",
+                    approved=True,
                 )
             ],
         },
+        context=user_context(approved_constraint_ids=frozenset({"width-limit"})),
     )
     changed = ConstraintRecord(
         id="width-limit",

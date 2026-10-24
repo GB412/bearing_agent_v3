@@ -366,6 +366,13 @@ class StateManager:
             existing = next(
                 (item for item in updated.constraints if item.id == constraint.id), None
             )
+            if context.kind == WriterKind.AGENT and (
+                constraint.severity.value == "HARD"
+                or constraint.origin.strip().casefold() == "user"
+            ):
+                raise StateManagerError(
+                    "Agents may submit only non-user-origin SOFT or INFO constraints"
+                )
             requires_approval = bool(
                 existing and (existing.approved or existing.severity.value == "HARD")
             )
@@ -560,6 +567,20 @@ class StateManager:
                 raise StateManagerError(
                     "New candidates must start PENDING, NOT_EVALUATED, and NOT_REQUESTED"
                 )
+            for parameter_id, record in candidate.parameters.items():
+                if (
+                    record.status == ParameterStatus.CONFIRMED
+                    or record.confirmed_by is not None
+                    or record.verified_source_ref is not None
+                ):
+                    raise StateManagerError(
+                        f"Candidate parameter {parameter_id!r} cannot claim user confirmation "
+                        "or trusted source evidence; confirm inputs in DesignState first"
+                    )
+                if context.kind == WriterKind.AGENT and record.status == ParameterStatus.PROVIDED:
+                    raise StateManagerError(
+                        f"Agent candidate parameter {parameter_id!r} cannot claim PROVIDED status"
+                    )
             if any(existing.candidate_id == candidate.candidate_id
                    and existing.version == candidate.version
                    for existing in updated.candidate_designs):
