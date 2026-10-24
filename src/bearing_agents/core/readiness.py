@@ -76,6 +76,17 @@ def readiness_for(
         if record.status not in accepted_statuses or record.value is None:
             missing.append(record)
             continue
+        # R2 external inputs must originate from authenticated user actions or
+        # evidence asserted by the trusted caller; source/source_ref are untrusted.
+        if record.role != ParameterRole.FIXED_INPUT:
+            conflicts.append(f"parameter:{parameter_id} must be a fixed external input")
+            continue
+        if record.status == ParameterStatus.PROVIDED and not record.verified_source_ref:
+            conflicts.append(f"parameter:{parameter_id} has no trusted source evidence")
+            continue
+        if record.status == ParameterStatus.CONFIRMED and not record.confirmed_by:
+            conflicts.append(f"parameter:{parameter_id} has no trusted confirmation")
+            continue
         try:
             parameter_registry.validate_record(parameter_id, record)
         except ParameterSchemaError as exc:
@@ -89,6 +100,8 @@ def readiness_for(
         case = state.operating_cases[0]
         if case.is_steady_state is not True:
             conflicts.append("operating_case:steady-state operation must be explicit")
+        if not (case.confirmed_by or case.verified_source_ref):
+            conflicts.append("operating_case:steady-state claim lacks trusted evidence")
         required_refs = {
             "journal_diameter_ref": "journal_diameter",
             "load_ref": "load",
