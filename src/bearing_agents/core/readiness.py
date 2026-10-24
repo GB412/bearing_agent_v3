@@ -116,5 +116,9 @@ def readiness_for(
                     f"operating_case:{case.case_id}:{field} does not resolve to "
                     f"{expected_parameter}"
                 )
+            elif state.parameters[reference].applies_to_case not in {None, case.case_id}:
+                conflicts.append(
+                    f"operating_case:{case.case_id}:{field} refers to a different case"
+                )
 
     return ReadinessResult(stage, not missing and not conflicts, missing, conflicts, False)
