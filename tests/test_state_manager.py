@@ -76,7 +76,12 @@ def test_confirming_suggested_design_variable_preserves_role(manager):
             },
         },
     )
-    confirmed = manager.confirm_parameter(design.design_id, 1, "bearing_width", context=WriteContext(kind=WriterKind.USER, actor="designer"))
+    confirmed = manager.confirm_parameter(
+        design.design_id,
+        1,
+        "bearing_width",
+        context=WriteContext(kind=WriterKind.USER, actor="designer"),
+    )
     record = confirmed.parameters["bearing_width"]
     assert record.role == ParameterRole.DESIGN_VARIABLE
     assert record.status == ParameterStatus.CONFIRMED
