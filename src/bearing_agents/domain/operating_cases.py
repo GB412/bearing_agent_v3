@@ -12,6 +12,8 @@ class OperatingCase(BaseModel):
     # An unknown operating regime must never be assumed to be steady-state.
     is_steady_state: bool | None = None
     confirmed_by: str | None = None
+    # Set by StateManager only when the trusted caller verifies the case evidence.
+    verified_source_ref: str | None = None
     description: str | None = None
     revision: int = Field(default=0, ge=0)
 
