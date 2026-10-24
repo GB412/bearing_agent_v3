@@ -243,6 +243,39 @@ class StateManager:
                 )
             record.parameter_id = key
             old = updated.parameters.get(key)
+            trusted_ref = context.verified_parameter_refs.get(key)
+            if trusted_ref is None and context.kind == WriterKind.USER:
+                # A directly authenticated user input is trusted by the API boundary.
+                trusted_ref = f"user-input:{design_id}:{expected_version + 1}:{key}"
+            unchanged_value = bool(
+                old and old.value == record.value and old.unit == record.unit
+                and old.role == record.role
+                and old.applies_to_case == record.applies_to_case
+            )
+            if record.verified_source_ref is not None and (
+                old is None or record.verified_source_ref != old.verified_source_ref
+            ):
+                raise StateManagerError(
+                    f"Verified source for {key!r} cannot come from the patch"
+                )
+            if record.status == ParameterStatus.PROVIDED and record.role in {
+                ParameterRole.FIXED_INPUT, ParameterRole.HARD_CONSTRAINT
+            } and not (trusted_ref or (unchanged_value and old.verified_source_ref)):
+                raise StateManagerError(
+                    f"External input {key!r} requires a verified source before PROVIDED"
+                )
+            if (
+                old and old.verified_source_ref is not None
+                and old.role in {ParameterRole.FIXED_INPUT, ParameterRole.HARD_CONSTRAINT}
+                and (
+                    not unchanged_value or old.status != record.status
+                )
+                and (context.kind != WriterKind.USER
+                     or key not in context.approved_parameter_ids)
+            ):
+                raise FixedInputWriteError(
+                    f"Verified input {key!r} requires user approval to change"
+                )
             if record.status != ParameterStatus.CONFIRMED and record.confirmed_by is not None:
                 raise StateManagerError(
                     f"Parameter {key!r} cannot have confirmed_by without CONFIRMED status"
@@ -306,6 +339,12 @@ class StateManager:
                 record.confirmed_by = confirmation.confirmed_by
             if record.source is None:
                 record.source = patch.source
+            # Provenance is computed at the trusted write boundary rather than
+            # accepted from source/source_ref strings supplied by an Agent.
+            record.verified_source_ref = (
+                trusted_ref
+                or (old.verified_source_ref if unchanged_value else None)
+            )
             try:
                 self.parameter_registry.validate_record(key, record)
             except ParameterSchemaError as exc:
@@ -350,6 +389,18 @@ class StateManager:
             changed.add("constraints")
             changed.add(f"constraint:{constraint.id}")
         for operating_case in patch.operating_case_changes:
+            if operating_case.verified_source_ref is not None:
+                existing_verified = next(
+                    (item for item in updated.operating_cases
+                     if item.case_id == operating_case.case_id),
+                    None,
+                )
+                if (existing_verified is None or
+                    operating_case.verified_source_ref !=
+                    existing_verified.verified_source_ref):
+                    raise StateManagerError(
+                        "Verified operating-case source cannot come from the patch"
+                    )
             if operating_case.confirmed_by is not None and (
                 context.kind != WriterKind.USER
                 or operating_case.confirmed_by != context.actor
@@ -374,8 +425,34 @@ class StateManager:
                     raise StateManagerError(
                         "Changing a confirmed operating case requires user reconfirmation"
                     )
+            trusted_case_ref = context.verified_case_refs.get(operating_case.case_id)
+            if trusted_case_ref is None and context.kind == WriterKind.USER:
+                trusted_case_ref = (
+                    f"user-case:{design_id}:{expected_version + 1}:{operating_case.case_id}"
+                )
+            same_conditions = bool(
+                existing_case
+                and existing_case.journal_diameter_ref == operating_case.journal_diameter_ref
+                and existing_case.load_ref == operating_case.load_ref
+                and existing_case.speed_ref == operating_case.speed_ref
+                and existing_case.load_direction == operating_case.load_direction
+                and existing_case.is_steady_state == operating_case.is_steady_state
+            )
+            if (existing_case and existing_case.verified_source_ref
+                and not same_conditions
+                and context.kind != WriterKind.USER):
+                raise StateManagerError(
+                    "Verified operating case cannot be overwritten by an agent"
+                )
             operating_case = operating_case.model_copy(
-                update={"revision": existing_case.revision + 1 if existing_case else 1}
+                update={
+                    "revision": existing_case.revision + 1 if existing_case else 1,
+                    "verified_source_ref": (
+                        trusted_case_ref
+                        or (existing_case.verified_source_ref
+                            if same_conditions else None)
+                    ),
+                }
             )
             updated.operating_cases = [
                 item for item in updated.operating_cases if item.case_id != operating_case.case_id
