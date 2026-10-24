@@ -183,18 +183,20 @@ def case_ready_state(steady=True):
         parameters={
             "journal_diameter": ParameterRecord(
                 value=100, unit="mm", role=ParameterRole.FIXED_INPUT,
-                status=ParameterStatus.PROVIDED,
+                status=ParameterStatus.PROVIDED, verified_source_ref="fixture:user:diameter",
             ),
             "load": ParameterRecord(
                 value=12000, unit="N", role=ParameterRole.FIXED_INPUT,
-                status=ParameterStatus.PROVIDED,
+                status=ParameterStatus.PROVIDED, verified_source_ref="fixture:user:load",
             ),
             "rotational_speed": ParameterRecord(
                 value=1500, unit="rpm", role=ParameterRole.FIXED_INPUT,
-                status=ParameterStatus.PROVIDED,
+                status=ParameterStatus.PROVIDED, verified_source_ref="fixture:user:speed",
             ),
         },
-        operating_cases=[make_case(steady=steady)],
+        operating_cases=[make_case(steady=steady).model_copy(
+            update={"verified_source_ref": "fixture:user:case"}
+        )],
     )
 
 
