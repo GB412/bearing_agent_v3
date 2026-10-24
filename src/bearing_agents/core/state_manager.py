@@ -233,7 +233,9 @@ class StateManager:
                     or key not in context.approved_parameter_ids
                 )
             ):
-                raise FixedInputWriteError(f"Modification of locked parameter {key!r} is not authorized")
+                raise FixedInputWriteError(
+                    f"Modification of locked parameter {key!r} is not authorized"
+                )
             if record.status == ParameterStatus.CONFIRMED:
                 confirmation = next(e for e in patch.confirmation_events if e.parameter_id == key)
                 if (
@@ -353,7 +355,9 @@ class StateManager:
             occurred_at=datetime.now(UTC),
             details={
                 "invalidated_objects": invalidated.invalidated_objects,
-                "confirmation_events": [e.model_dump(mode="json") for e in patch.confirmation_events],
+                "confirmation_events": [
+                    e.model_dump(mode="json") for e in patch.confirmation_events
+                ],
                 "role_changes": [e.model_dump(mode="json") for e in patch.role_changes],
                 "rule_set_change": (
                     patch.rule_set_change.model_dump(mode="json") if patch.rule_set_change else None
