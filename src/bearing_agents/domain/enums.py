@@ -1,0 +1,87 @@
+from enum import StrEnum
+
+
+class ParameterRole(StrEnum):
+    FIXED_INPUT = "FIXED_INPUT"
+    HARD_CONSTRAINT = "HARD_CONSTRAINT"
+    DESIGN_VARIABLE = "DESIGN_VARIABLE"
+    DERIVED = "DERIVED"
+
+
+class ParameterStatus(StrEnum):
+    MISSING = "MISSING"
+    PROVIDED = "PROVIDED"
+    CONFIRMED = "CONFIRMED"
+    SUGGESTED = "SUGGESTED"
+    CONFLICT = "CONFLICT"
+    UNAVAILABLE = "UNAVAILABLE"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+    STALE = "STALE"
+
+
+class ConstraintOperator(StrEnum):
+    EQ = "EQ"
+    LE = "LE"
+    GE = "GE"
+    LT = "LT"
+    GT = "GT"
+    IN = "IN"
+    NOT_IN = "NOT_IN"
+
+
+class ConstraintSeverity(StrEnum):
+    HARD = "HARD"
+    SOFT = "SOFT"
+    INFO = "INFO"
+
+
+class ConfirmationStatus(StrEnum):
+    PENDING = "PENDING"
+    CONFIRMED = "CONFIRMED"
+    REJECTED = "REJECTED"
+    NOT_REQUIRED = "NOT_REQUIRED"
+
+
+class PrecheckStatus(StrEnum):
+    NOT_EVALUATED = "NOT_EVALUATED"
+    PRECHECK_PASS = "PRECHECK_PASS"
+    PRECHECK_FAIL = "PRECHECK_FAIL"
+    REVIEW_REQUIRED = "REVIEW_REQUIRED"
+    INVALID = "INVALID"
+    STALE = "STALE"
+
+
+class SimulationStatus(StrEnum):
+    NOT_REQUESTED = "NOT_REQUESTED"
+    NOT_AVAILABLE = "NOT_AVAILABLE"
+    NOT_EVALUATED = "NOT_EVALUATED"
+    STALE = "STALE"
+
+
+class IssueStatus(StrEnum):
+    OPEN = "OPEN"
+    RESOLVED = "RESOLVED"
+    STALE = "STALE"
+
+
+class TaskStatus(StrEnum):
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    BLOCKED = "BLOCKED"
+    STALE = "STALE"
+
+
+class AgentResultStatus(StrEnum):
+    SUCCESS = "SUCCESS"
+    NEEDS_REVIEW = "NEEDS_REVIEW"
+    INSUFFICIENT_RULES = "INSUFFICIENT_RULES"
+    FAILED = "FAILED"
+
+
+class RuleStatus(StrEnum):
+    DRAFT_EXTRACTED = "DRAFT_EXTRACTED"
+    SOURCE_CHECKED = "SOURCE_CHECKED"
+    EXPERT_APPROVED = "EXPERT_APPROVED"
+    ACTIVE = "ACTIVE"
