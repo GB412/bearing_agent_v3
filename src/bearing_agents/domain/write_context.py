@@ -22,6 +22,10 @@ class WriteContext(BaseModel):
     actor: str | None = None
     approved_parameter_ids: frozenset[str] = Field(default_factory=frozenset)
     approved_constraint_ids: frozenset[str] = Field(default_factory=frozenset)
+    # Evidence refs asserted by the trusted application boundary, not an LLM.
+    # Keys are canonical parameter_id/case_id; values are source message IDs.
+    verified_parameter_refs: dict[str, str] = Field(default_factory=dict)
+    verified_case_refs: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_identity(self) -> "WriteContext":
@@ -31,4 +35,7 @@ class WriteContext(BaseModel):
             self.approved_parameter_ids or self.approved_constraint_ids
         ):
             raise ValueError("Only USER context may approve locked domain input changes")
+        for refs in (self.verified_parameter_refs, self.verified_case_refs):
+            if any(not key.strip() or not value.strip() for key, value in refs.items()):
+                raise ValueError("Verified source keys/refs must be nonempty")
         return self
