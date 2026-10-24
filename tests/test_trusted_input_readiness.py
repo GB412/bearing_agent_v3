@@ -56,7 +56,7 @@ def test_agent_cannot_fabricate_provided_external_inputs(manager):
             {
                 "source": "user",
                 "actor": "pretend-human",
-                "parameters": required_parameters(),
+                "parameter_changes": required_parameters(),
                 "operating_case_changes": [case()],
             },
         )
@@ -89,7 +89,7 @@ def test_agent_can_suggest_inputs_but_r2_stays_not_ready(manager):
     }
     d = manager.apply_patch(
         d.design_id, d.state_version,
-        {"source": "requirement_agent", "parameters": proposals,
+        {"source": "requirement_agent", "parameter_changes": proposals,
          "operating_case_changes": [case()]},
     )
     readiness = manager.readiness_for(d.design_id, "R2")
@@ -104,7 +104,7 @@ def test_trusted_user_can_directly_provide_inputs_without_reconfirmation(manager
         d.design_id, 0,
         {
             "source": "user",
-            "parameters": required_parameters(),
+            "parameter_changes": required_parameters(),
             "operating_case_changes": [case()],
         },
         context=WriteContext(kind=WriterKind.USER, actor="engineer"),
@@ -128,7 +128,7 @@ def test_verified_user_message_may_be_extracted_by_agent(manager):
         d.design_id, 0,
         {
             "source": "requirement_agent",
-            "parameters": required_parameters(),
+            "parameter_changes": required_parameters(),
             "operating_case_changes": [case()],
         },
         context=WriteContext(
@@ -149,7 +149,7 @@ def test_verified_parameters_with_unverified_steady_case_are_not_ready(manager):
         d.design_id, 0,
         {
             "source": "requirement_agent",
-            "parameters": required_parameters(),
+            "parameter_changes": required_parameters(),
             "operating_case_changes": [case()],
         },
         context=WriteContext(
@@ -226,7 +226,8 @@ def test_agent_cannot_change_verified_input_without_user_approval(manager):
 
 def test_agent_cannot_relabel_external_inputs_as_design_variables_for_r2(manager):
     d = manager.create_design()
-    d = manager.apply_patch(
+    with pytest.raises(StateManagerError, match="must remain SUGGESTED"):
+        manager.apply_patch(
         d.design_id, 0,
         {
             "source": "agent",
@@ -243,11 +244,7 @@ def test_agent_cannot_relabel_external_inputs_as_design_variables_for_r2(manager
         },
         context=WriteContext(verified_case_refs={"c1": "message-14"}),
     )
-    assert not manager.readiness_for(d.design_id, "R2").ready
-    assert any("fixed external input" in s for s in manager.readiness_for(
-        d.design_id, "R2"
-    ).conflicts)
-
+    assert manager.get_design(d.design_id).state_version == 0
 
 def test_get_quantity_rejects_provisional_design_value_by_default(manager):
     d = manager.create_design()
@@ -291,7 +288,7 @@ def test_r2_rejects_input_scoped_to_another_case(manager):
     d = manager.apply_patch(
         d.design_id, 0,
         {
-            "source": "user", "parameters": parameters,
+            "source": "user", "parameter_changes": parameters,
             "operating_case_changes": [case()],
         },
         context=WriteContext(kind=WriterKind.USER, actor="engineer"),
