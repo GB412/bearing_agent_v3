@@ -1,6 +1,16 @@
+"""Deterministic readiness checks for a supported bearing-design stage.
+
+R2 means necessary external inputs are available for preliminary design;
+it does not establish engineering suitability or user approval.
+"""
+
 from dataclasses import dataclass
 
 from bearing_agents.domain.enums import ParameterRole, ParameterStatus
+from bearing_agents.domain.parameter_registry import (
+    ParameterSchemaError,
+    ParameterSchemaRegistry,
+)
 from bearing_agents.domain.parameters import ParameterRecord
 from bearing_agents.domain.state import DesignState
 
@@ -16,9 +26,12 @@ class ReadinessResult:
 
 class StageRequirementRegistry:
     def __init__(self, requirements: dict[str, tuple[str, ...]] | None = None):
-        self._requirements = requirements or {
-            "R2": ("journal_diameter", "load", "rotational_speed")
-        }
+        # An explicitly empty configuration MUST NOT silently enable the default.
+        self._requirements = (
+            {"R2": ("journal_diameter", "load", "rotational_speed")}
+            if requirements is None
+            else dict(requirements)
+        )
 
     def requirements_for(self, stage: str) -> tuple[str, ...] | None:
         return self._requirements.get(stage)
@@ -28,13 +41,21 @@ def readiness_for(
     state: DesignState,
     stage: str,
     registry: StageRequirementRegistry | None = None,
+    *,
+    parameter_registry: ParameterSchemaRegistry | None = None,
 ) -> ReadinessResult:
-    registry = registry or StageRequirementRegistry()
+    registry = registry if registry is not None else StageRequirementRegistry()
+    parameter_registry = (
+        parameter_registry if parameter_registry is not None else ParameterSchemaRegistry()
+    )
     required = registry.requirements_for(stage)
-    if required is None:
+    # A missing or empty stage requirement set is not evidence that a design is ready.
+    if not required:
         return ReadinessResult(stage, False, [], [], True)
+
     missing: list[ParameterRecord] = []
     conflicts: list[str] = []
+    accepted_statuses = {ParameterStatus.PROVIDED, ParameterStatus.CONFIRMED}
     for parameter_id in required:
         record = state.parameters.get(parameter_id)
         if record is None:
@@ -46,12 +67,20 @@ def readiness_for(
                     required_for=[stage],
                 )
             )
-        elif record.status in {
-            ParameterStatus.MISSING,
-            ParameterStatus.CONFLICT,
-            ParameterStatus.STALE,
-        }:
-            (conflicts if record.status == ParameterStatus.CONFLICT else missing).append(record)
+            continue
+        if record.status == ParameterStatus.CONFLICT:
+            conflicts.append(f"parameter:{parameter_id} is conflicting")
+            continue
+        # UNAVAILABLE, NOT_APPLICABLE, SUGGESTED, STALE, and MISSING must not
+        # satisfy a required external input even though some have no value.
+        if record.status not in accepted_statuses or record.value is None:
+            missing.append(record)
+            continue
+        try:
+            parameter_registry.validate_record(parameter_id, record)
+        except ParameterSchemaError as exc:
+            conflicts.append(f"parameter:{parameter_id}: {exc}")
+
     steady_cases = [case for case in state.operating_cases if case.is_steady_state]
     if not steady_cases:
         conflicts.append("operating_case:one steady-state case is required")
@@ -61,13 +90,17 @@ def readiness_for(
             "load_ref": "load",
             "speed_ref": "rotational_speed",
         }
+        # R2 checks every case claimed to be within this single-case scope;
+        # incorrectly linked cases must not be silently ignored.
         for case in steady_cases:
             for field, expected_parameter in required_refs.items():
                 reference = getattr(case, field)
                 if reference is None:
-                    conflicts.append(f"operating_case:{field} is required")
+                    conflicts.append(f"operating_case:{case.case_id}:{field} is required")
                 elif reference != expected_parameter or reference not in state.parameters:
                     conflicts.append(
-                        f"operating_case:{field} does not resolve to {expected_parameter}"
+                        f"operating_case:{case.case_id}:{field} does not resolve to "
+                        f"{expected_parameter}"
                     )
+
     return ReadinessResult(stage, not missing and not conflicts, missing, conflicts, False)
