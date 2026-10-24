@@ -39,6 +39,7 @@ def test_state_updates_cannot_replace_locked_parameter(manager):
         design.design_id,
         0,
         {"source": "user", "parameters": {"journal_diameter": record(100, "mm")}},
+        context=user_context(),
     )
     with pytest.raises(StateManagerError, match="state_updates is closed"):
         manager.apply_patch(
@@ -74,6 +75,7 @@ def test_installation_limit_change_stales_passed_candidate(manager):
                 )
             ],
         },
+        context=user_context(),
     )
     # Seed a previously approved result through the repository for historical
     # invalidation testing; ordinary Agent creation cannot claim a pass.
@@ -117,6 +119,7 @@ def test_new_candidate_captures_current_dependency_snapshot(manager):
                 )
             ],
         },
+        context=WriteContext(verified_parameter_refs={"journal_diameter": "user-msg:1"}),
     )
     candidate = updated.candidate_designs[0]
     assert candidate.input_dependency_refs["parameter:journal_diameter"] == "1"
@@ -143,6 +146,7 @@ def test_category_values_and_numeric_schema_reject_bool_and_bad_units(manager):
                 "material": record("铜合金", "1", ParameterRole.HARD_CONSTRAINT)
             },
         },
+        context=user_context(),
     )
     assert material.parameters["material"].value == "铜合金"
     with pytest.raises(StateManagerError, match="numeric"):
@@ -150,12 +154,14 @@ def test_category_values_and_numeric_schema_reject_bool_and_bad_units(manager):
             design.design_id,
             1,
             {"source": "user", "parameters": {"journal_diameter": record(True, "mm")}},
+            context=user_context(),
         )
     with pytest.raises(StateManagerError, match="dimension|allowed"):
         manager.apply_patch(
             design.design_id,
             1,
             {"source": "user", "parameters": {"journal_diameter": record(100, "N")}},
+            context=user_context(),
         )
 
 

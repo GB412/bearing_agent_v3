@@ -131,9 +131,9 @@ def test_untrusted_claimed_actor_is_not_audited_as_authenticated_user(manager):
     updated = manager.apply_patch(d.design_id, 0, {
         "source": "agent", "actor": "claimed-designer",
         "parameters": {
-            "journal_diameter": ParameterRecord(
-                value=100, unit="mm", role=ParameterRole.FIXED_INPUT,
-                status=ParameterStatus.PROVIDED,
+            "bearing_width": ParameterRecord(
+                value=100, unit="mm", role=ParameterRole.DESIGN_VARIABLE,
+                status=ParameterStatus.SUGGESTED,
             ),
         },
     })

@@ -15,6 +15,8 @@ class ParameterRecord(BaseModel):
     status: ParameterStatus = ParameterStatus.MISSING
     source: str | None = None
     source_ref: str | None = None
+    # Authority-managed evidence reference, never accepted from an Agent patch.
+    verified_source_ref: str | None = None
     applies_to_case: str | None = None
     confirmed_by: str | None = None
     revision: int = Field(default=0, ge=0)

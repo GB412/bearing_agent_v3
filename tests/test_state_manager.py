@@ -98,6 +98,7 @@ def test_patch_records_versions_sources_and_event_history(manager):
             "actor": "engineer",
             "parameters": {"journal_diameter": parameter(100, source_ref="drawing-A")},
         },
+        context=WriteContext(kind=WriterKind.USER, actor="engineer"),
     )
     assert updated.state_version == 1
     assert updated.parameters["journal_diameter"].revision == 1
@@ -112,7 +113,8 @@ def test_patch_records_versions_sources_and_event_history(manager):
 def test_old_state_patch_is_rejected(manager):
     design = manager.create_design()
     manager.apply_patch(
-        design.design_id, 0, {"source": "user", "parameters": {"journal_diameter": parameter(100)}}
+        design.design_id, 0, {"source": "user", "parameters": {"journal_diameter": parameter(100)}},
+        context=WriteContext(kind=WriterKind.USER, actor="designer"),
     )
     with pytest.raises(VersionConflictError):
         manager.apply_patch(
@@ -125,7 +127,8 @@ def test_old_state_patch_is_rejected(manager):
 def test_fixed_input_modification_requires_explicit_authorization(manager):
     design = manager.create_design()
     manager.apply_patch(
-        design.design_id, 0, {"source": "user", "parameters": {"journal_diameter": parameter(100)}}
+        design.design_id, 0, {"source": "user", "parameters": {"journal_diameter": parameter(100)}},
+        context=WriteContext(kind=WriterKind.USER, actor="designer"),
     )
     with pytest.raises(FixedInputWriteError):
         manager.apply_patch(
@@ -156,6 +159,7 @@ def test_agent_cannot_self_authorize_fixed_input_change(manager):
         design.design_id,
         0,
         {"source": "user", "parameters": {"journal_diameter": parameter(100)}},
+        context=WriteContext(kind=WriterKind.USER, actor="designer"),
     )
     with pytest.raises(FixedInputWriteError, match="user-sourced"):
         manager.apply_patch(
@@ -177,6 +181,7 @@ def test_unknown_unit_is_rejected(manager, unit):
             design.design_id,
             0,
             {"source": "user", "parameters": {"journal_diameter": parameter(100, unit=unit)}},
+            context=WriteContext(kind=WriterKind.USER, actor="designer"),
         )
 
 
@@ -196,13 +201,15 @@ def test_missing_value_cannot_be_coerced_to_zero_and_value_requires_unit(manager
             design.design_id,
             0,
             {"source": "user", "parameters": {"load": parameter(12000, unit=None)}},
+            context=WriteContext(kind=WriterKind.USER, actor="designer"),
         )
 
 
 def test_derived_values_and_candidate_are_staled_after_diameter_change(manager):
     design = manager.create_design()
     manager.apply_patch(
-        design.design_id, 0, {"source": "user", "parameters": {"journal_diameter": parameter(100)}}
+        design.design_id, 0, {"source": "user", "parameters": {"journal_diameter": parameter(100)}},
+        context=WriteContext(kind=WriterKind.USER, actor="designer"),
     )
     seeded = manager.apply_patch(
         design.design_id,
