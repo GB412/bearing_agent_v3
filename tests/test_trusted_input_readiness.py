@@ -247,3 +247,35 @@ def test_agent_cannot_relabel_external_inputs_as_design_variables_for_r2(manager
     assert any("fixed external input" in s for s in manager.readiness_for(
         d.design_id, "R2"
     ).conflicts)
+
+
+def test_get_quantity_rejects_provisional_design_value_by_default(manager):
+    d = manager.create_design()
+    d = manager.apply_patch(
+        d.design_id, 0,
+        {
+            "source": "design_agent",
+            "parameters": {
+                "bearing_width": ParameterRecord(
+                    value=60, unit="mm",
+                    role=ParameterRole.DESIGN_VARIABLE,
+                    status=ParameterStatus.SUGGESTED,
+                ),
+            },
+        },
+    )
+    with pytest.raises(StateManagerError, match="no usable quantity"):
+        manager.get_quantity(d.design_id, "bearing_width", "mm")
+    assert manager.get_quantity(
+        d.design_id, "bearing_width", "mm", allow_suggested=True
+    ) == 60
+
+
+def test_get_quantity_refuses_unverified_legacy_fixed_input(manager):
+    d = manager.create_design()
+    # Simulate a legacy database record produced before the provenance guard.
+    d.parameters["journal_diameter"] = fixed(100, "mm")
+    manager.repository.save(d, expected_version=d.state_version)
+    with pytest.raises(StateManagerError, match="no trusted source"):
+        manager.get_quantity(d.design_id, "journal_diameter", "mm")
+    assert not manager.readiness_for(d.design_id, "R2").ready
