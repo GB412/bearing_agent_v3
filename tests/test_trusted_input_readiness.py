@@ -228,22 +228,22 @@ def test_agent_cannot_relabel_external_inputs_as_design_variables_for_r2(manager
     d = manager.create_design()
     with pytest.raises(StateManagerError, match="must remain SUGGESTED"):
         manager.apply_patch(
-        d.design_id, 0,
-        {
-            "source": "agent",
-            "parameter_changes": {
-                key: record.model_copy(
-                    update={
-                        "role": ParameterRole.DESIGN_VARIABLE,
-                        "status": ParameterStatus.PROVIDED,
-                    }
-                )
-                for key, record in required_parameters().items()
+            d.design_id, 0,
+            {
+                "source": "agent",
+                "parameter_changes": {
+                    key: record.model_copy(
+                        update={
+                            "role": ParameterRole.DESIGN_VARIABLE,
+                            "status": ParameterStatus.PROVIDED,
+                        }
+                    )
+                    for key, record in required_parameters().items()
+                },
+                "operating_case_changes": [case()],
             },
-            "operating_case_changes": [case()],
-        },
-        context=WriteContext(verified_case_refs={"c1": "message-14"}),
-    )
+            context=WriteContext(verified_case_refs={"c1": "message-14"}),
+        )
     assert manager.get_design(d.design_id).state_version == 0
 
 def test_get_quantity_rejects_provisional_design_value_by_default(manager):
