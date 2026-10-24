@@ -40,15 +40,14 @@ def test_create_design_persists_empty_state_without_default_values(manager):
 
 def test_unknown_diameter_remains_missing_and_missing_items_are_metadata_driven(manager):
     design = manager.create_design()
+    manager.stage_registry.register("candidate", ("journal_diameter",))
     updated = manager.apply_patch(
         design.design_id,
         0,
         {
             "source": "user",
             "parameter_changes": {
-                "journal_diameter": parameter(
-                    None, ParameterStatus.MISSING, required_for=["candidate"]
-                ),
+                "journal_diameter": parameter(None, ParameterStatus.MISSING),
                 "optional_note": ParameterRecord(
                     role=ParameterRole.DESIGN_VARIABLE, status=ParameterStatus.MISSING
                 ),
@@ -160,7 +159,7 @@ def test_agent_cannot_self_authorize_fixed_input_change(manager):
         {"source": "user", "parameter_changes": {"journal_diameter": parameter(100)}},
         context=WriteContext(kind=WriterKind.USER, actor="designer"),
     )
-    with pytest.raises(FixedInputWriteError, match="user-sourced"):
+    with pytest.raises(FixedInputWriteError, match="requires user approval"):
         manager.apply_patch(
             design.design_id,
             1,
@@ -237,6 +236,7 @@ def test_derived_values_and_candidate_are_staled_after_diameter_change(manager):
                 )
             ],
         },
+        context=WriteContext(kind=WriterKind.SYSTEM, actor="calculator"),
     )
     updated = manager.apply_patch(
         design.design_id,
