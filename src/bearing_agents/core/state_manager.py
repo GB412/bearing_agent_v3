@@ -10,6 +10,7 @@ from bearing_agents.core.readiness import (
     readiness_for,
 )
 from bearing_agents.domain.agent_protocols import (
+    StateRepository,
     ConfirmationEvent,
     RoleChange,
     StatePatch,
@@ -36,7 +37,6 @@ from bearing_agents.domain.proposals import (
 )
 from bearing_agents.domain.state import DesignState
 from bearing_agents.domain.write_context import WriteContext, WriterKind
-from bearing_agents.infra.state_repository import SQLiteStateRepository
 
 
 class StateManagerError(ValueError):
@@ -103,7 +103,7 @@ def _snapshot_candidate_dependencies(
 class StateManager:
     def __init__(
         self,
-        repository: SQLiteStateRepository,
+        repository: StateRepository,
         *,
         parameter_registry: ParameterSchemaRegistry | None = None,
         stage_registry: StageRequirementRegistry | None = None,
@@ -147,23 +147,9 @@ class StateManager:
             raise VersionConflictError(
                 f"Expected version {expected_version}, current version is {current.state_version}"
             )
-        if patch.state_updates:
-            raise StateManagerError(
-                "state_updates is closed; use typed parameter_changes, constraint_changes, "
-                "operating_case_changes, candidate_additions, confirmation_events, or role_changes"
-            )
-        if patch.authorized_fixed_input_ids - context.approved_parameter_ids:
-            raise FixedInputWriteError(
-                "Patch approvals must come from trusted WriteContext; "
-                "user-sourced authorization is required"
-            )
         updated = current.model_copy(deep=True)
         changed: set[str] = set()
-        parameter_changes = dict(patch.parameters)
-        duplicate_ids = set(parameter_changes) & set(patch.parameter_changes)
-        if duplicate_ids:
-            raise StateManagerError(f"Duplicate parameter changes: {sorted(duplicate_ids)}")
-        parameter_changes.update(patch.parameter_changes)
+        parameter_changes = dict(patch.parameter_changes)
         confirmation_events = list(patch.confirmation_events)
         resolutions: dict[str, ProposalResolution] = {}
         for resolution in patch.proposal_resolutions:
