@@ -258,12 +258,6 @@ class StateManager:
                 raise StateManagerError(
                     f"Verified source for {key!r} cannot come from the patch"
                 )
-            if record.status == ParameterStatus.PROVIDED and record.role in {
-                ParameterRole.FIXED_INPUT, ParameterRole.HARD_CONSTRAINT
-            } and not (trusted_ref or (unchanged_value and old.verified_source_ref)):
-                raise StateManagerError(
-                    f"External input {key!r} requires a verified source before PROVIDED"
-                )
             if (
                 old and old.verified_source_ref is not None
                 and old.role in {ParameterRole.FIXED_INPUT, ParameterRole.HARD_CONSTRAINT}
@@ -275,6 +269,12 @@ class StateManager:
             ):
                 raise FixedInputWriteError(
                     f"Verified input {key!r} requires user approval to change"
+                )
+            if record.status == ParameterStatus.PROVIDED and record.role in {
+                ParameterRole.FIXED_INPUT, ParameterRole.HARD_CONSTRAINT
+            } and not (trusted_ref or (unchanged_value and old.verified_source_ref)):
+                raise StateManagerError(
+                    f"External input {key!r} requires a verified source before PROVIDED"
                 )
             if record.status != ParameterStatus.CONFIRMED and record.confirmed_by is not None:
                 raise StateManagerError(
