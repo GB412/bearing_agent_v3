@@ -70,11 +70,17 @@ def test_installation_limit_change_stales_passed_candidate(manager):
                     version=1,
                     source_parameter_revisions={"bearing_width": 1},
                     input_dependency_refs={"installation_width_limit": "1"},
-                    precheck_status=PrecheckStatus.PRECHECK_PASS,
+                    precheck_status=PrecheckStatus.NOT_EVALUATED,
                 )
             ],
         },
     )
+    # Seed a previously approved result through the repository for historical
+    # invalidation testing; ordinary Agent creation cannot claim a pass.
+    persisted = manager.get_design(design.design_id)
+    persisted.candidate_designs[0].precheck_status = PrecheckStatus.PRECHECK_PASS
+    manager.repository.save(persisted, persisted.state_version)
+
     updated = manager.apply_patch(
         design.design_id,
         seeded.state_version,
@@ -107,14 +113,14 @@ def test_new_candidate_captures_current_dependency_snapshot(manager):
                     candidate_id="c1",
                     version=1,
                     source_parameter_revisions={"journal_diameter": 1},
-                    precheck_status=PrecheckStatus.PRECHECK_PASS,
+                    precheck_status=PrecheckStatus.NOT_EVALUATED,
                 )
             ],
         },
     )
     candidate = updated.candidate_designs[0]
     assert candidate.input_dependency_refs["parameter:journal_diameter"] == "1"
-    assert candidate.precheck_status == PrecheckStatus.PRECHECK_PASS
+    assert candidate.precheck_status == PrecheckStatus.NOT_EVALUATED
 
 
 def test_unit_conversion_is_used_by_calculators():
@@ -181,14 +187,14 @@ def test_agent_cannot_confirm_but_user_command_records_event_and_role_change(man
             },
         )
     confirmed = manager.confirm_parameter(
-        design.design_id, suggested.state_version, "bearing_width", "designer"
+        design.design_id, suggested.state_version, "bearing_width", context=user_context()
     )
     changed = manager.change_parameter_role(
         design.design_id,
         confirmed.state_version,
         "bearing_width",
         ParameterRole.HARD_CONSTRAINT,
-        "designer",
+        context=user_context(approved_parameter_ids=frozenset({"bearing_width"})),
     )
     assert changed.parameters["bearing_width"].role == ParameterRole.HARD_CONSTRAINT
     assert len(changed.event_history) == 3
