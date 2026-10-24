@@ -11,9 +11,10 @@ Known physical parameter identifiers are checked against a small explicit unit/d
 Raw values and their units remain in `ParameterRecord`; the manager does not silently rewrite a
 user's value into normalized units. Radial clearance and diametral clearance are separate IDs.
 
-## PR-01-003: Missingness is metadata-driven
+## PR-01-003: Missingness is template-driven and fail-closed
 
-`list_missing_for(stage)` returns only parameters explicitly marked `MISSING` and tagged with that
-stage in `required_for`. PR-01 has no reviewed design-completeness rules, so it does not prescribe
-which fields must be present for a design stage.
+`StageRequirementRegistry` supplies the small, explicit R2 input template used by this PR. The
+empty design therefore reports missing diameter, load and speed, and requires one resolvable
+steady-state operating case. Unknown future templates return `not_configured=True`; they do not
+silently pass. Width remains a design variable and is not an R2 input requirement.
 

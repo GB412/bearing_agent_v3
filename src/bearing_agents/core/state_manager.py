@@ -1,16 +1,30 @@
-import math
 from datetime import UTC, datetime
 from uuid import uuid4
 
 from pydantic import ValidationError
 
 from bearing_agents.core.dependency_tracker import InvalidationResult, invalidate_dependents
-from bearing_agents.core.unit_normalizer import UnitError, normalize
-from bearing_agents.domain.agent_protocols import StatePatch
+from bearing_agents.core.readiness import (
+    ReadinessResult,
+    StageRequirementRegistry,
+    readiness_for,
+)
+from bearing_agents.domain.agent_protocols import (
+    ConfirmationEvent,
+    RoleChange,
+    StatePatch,
+)
+from bearing_agents.domain.candidates import CandidateDesign
+from bearing_agents.domain.constraints import ConstraintRecord
 from bearing_agents.domain.enums import ParameterRole, ParameterStatus
 from bearing_agents.domain.events import StateEvent
+from bearing_agents.domain.parameter_registry import (
+    ParameterSchemaError,
+    ParameterSchemaRegistry,
+)
 from bearing_agents.domain.parameters import ParameterRecord
 from bearing_agents.domain.state import DesignState
+from bearing_agents.domain.write_context import WriteContext, WriterKind
 from bearing_agents.infra.state_repository import SQLiteStateRepository
 
 
@@ -26,23 +40,66 @@ class FixedInputWriteError(StateManagerError):
     pass
 
 
-UNIT_DIMENSIONS = {
-    "journal_diameter": "length",
-    "bearing_bore_diameter": "length",
-    "radial_clearance": "length",
-    "diametral_clearance": "length",
-    "bearing_width": "length",
-    "load": "force",
-    "rotational_speed": "rotational_speed",
-    "surface_speed": "speed",
-    "mean_pressure": "pressure",
-    "clearance_ratio": "dimensionless",
-}
+def _snapshot_candidate_dependencies(
+    candidate: CandidateDesign, state: DesignState
+) -> CandidateDesign:
+    """Attach current revisions to a newly submitted candidate."""
+    parameter_revisions = {
+        key: record.revision for key, record in state.parameters.items()
+    }
+    constraint_revisions = {item.id: item.revision for item in state.constraints}
+    for supplied, actual in (
+        (candidate.source_parameter_revisions, parameter_revisions),
+        (candidate.input_constraint_revisions, constraint_revisions),
+    ):
+        if any(actual.get(key) != revision for key, revision in supplied.items()):
+            raise StateManagerError("Candidate dependency revision is not current")
+    if (
+        candidate.rule_set_version is not None
+        and candidate.rule_set_version != state.knowledge_rule_set_version
+    ):
+        raise StateManagerError("Candidate rule set version is not current")
+    dependency_refs = {
+        f"parameter:{key}": str(revision) for key, revision in parameter_revisions.items()
+    }
+    for constraint in state.constraints:
+        dependency_refs[f"constraint:{constraint.id}"] = str(constraint.revision)
+    for operating_case in state.operating_cases:
+        dependency_refs[f"operating_case:{operating_case.case_id}"] = str(
+            operating_case.revision
+        )
+    rule_set_version = state.knowledge_rule_set_version
+    if rule_set_version is not None:
+        dependency_refs["rule_set_version"] = rule_set_version
+    for key, value in candidate.input_dependency_refs.items():
+        expected = dependency_refs.get(key)
+        # Accept the legacy unprefixed parameter reference spelling too.
+        if key in parameter_revisions:
+            expected = str(parameter_revisions[key])
+        if expected is None or expected != value:
+            raise StateManagerError(f"Candidate dependency reference {key!r} is not current")
+    dependency_refs.update(candidate.input_dependency_refs)
+    return candidate.model_copy(
+        update={
+            "source_parameter_revisions": parameter_revisions,
+            "input_constraint_revisions": constraint_revisions,
+            "input_dependency_refs": dependency_refs,
+            "rule_set_version": rule_set_version,
+        }
+    )
 
 
 class StateManager:
-    def __init__(self, repository: SQLiteStateRepository):
+    def __init__(
+        self,
+        repository: SQLiteStateRepository,
+        *,
+        parameter_registry: ParameterSchemaRegistry | None = None,
+        stage_registry: StageRequirementRegistry | None = None,
+    ):
         self.repository = repository
+        self.parameter_registry = parameter_registry or ParameterSchemaRegistry()
+        self.stage_registry = stage_registry or StageRequirementRegistry()
 
     def create_design(
         self, user_goal: str | None = None, thread_id: str | None = None
@@ -62,89 +119,379 @@ class StateManager:
         design_id: str,
         expected_version: int,
         patch: StatePatch | dict,
+        *,
+        context: WriteContext | None = None,
     ) -> DesignState:
         try:
-            patch = patch if isinstance(patch, StatePatch) else StatePatch.model_validate(patch)
+            # model_copy()/model_construct() may contain invalid fields; even model
+            # instances must cross the same validation boundary as external dicts.
+            patch = StatePatch.model_validate(
+                patch.model_dump() if isinstance(patch, StatePatch) else patch
+            )
         except ValidationError as exc:
             raise StateManagerError(str(exc)) from exc
         current = self.get_design(design_id)
+        context = context or WriteContext()
         if current.state_version != expected_version:
             raise VersionConflictError(
                 f"Expected version {expected_version}, current version is {current.state_version}"
             )
-        if patch.authorized_fixed_input_ids and patch.source != "user":
+        if patch.state_updates:
+            raise StateManagerError(
+                "state_updates is closed; use typed parameter_changes, constraint_changes, "
+                "operating_case_changes, candidate_additions, confirmation_events, or role_changes"
+            )
+        if patch.authorized_fixed_input_ids - context.approved_parameter_ids:
             raise FixedInputWriteError(
-                "Only a user-sourced patch may authorize fixed input changes"
+                "Patch approvals must come from trusted WriteContext; "
+                "user-sourced authorization is required"
             )
         updated = current.model_copy(deep=True)
         changed: set[str] = set()
-        for key, proposed in patch.parameters.items():
+        parameter_changes = dict(patch.parameters)
+        duplicate_ids = set(parameter_changes) & set(patch.parameter_changes)
+        if duplicate_ids:
+            raise StateManagerError(f"Duplicate parameter changes: {sorted(duplicate_ids)}")
+        parameter_changes.update(patch.parameter_changes)
+        confirmation_ids = {event.parameter_id for event in patch.confirmation_events}
+        role_changes = {change.parameter_id: change for change in patch.role_changes}
+        if patch.confirmation_events:
+            if context.kind != WriterKind.USER:
+                raise StateManagerError("Confirmation events require a trusted user context")
+            if any(event.confirmed_by != context.actor for event in patch.confirmation_events):
+                raise StateManagerError("Confirmation actor mismatch")
+            if not confirmation_ids <= set(parameter_changes):
+                raise StateManagerError(
+                    "Each confirmation event must accompany the corresponding parameter change"
+                )
+            if any(
+                parameter_changes[key].status != ParameterStatus.CONFIRMED
+                for key in confirmation_ids
+            ):
+                raise StateManagerError("Confirmation events require CONFIRMED parameter changes")
+            if len(confirmation_ids) != len(patch.confirmation_events):
+                raise StateManagerError("Duplicate confirmation events")
+        if role_changes:
+            if len(role_changes) != len(patch.role_changes):
+                raise StateManagerError("Duplicate role changes")
+            if context.kind != WriterKind.USER or not set(role_changes) <= set(parameter_changes):
+                raise StateManagerError("Role changes require user approval and parameter changes")
+            for key, change in role_changes.items():
+                old = current.parameters.get(key)
+                if (
+                    old is None or old.role != change.from_role
+                    or parameter_changes[key].role != change.to_role
+                    or change.approved_by != context.actor
+                ):
+                    raise StateManagerError(f"Invalid approved role change for {key!r}")
+        for key, proposed in parameter_changes.items():
             record = proposed.model_copy(deep=True)
-            record.parameter_id = record.parameter_id or key
+            if record.parameter_id is not None and record.parameter_id != key:
+                raise StateManagerError(
+                    f"Parameter ID {record.parameter_id!r} does not match key {key!r}"
+                )
+            record.parameter_id = key
             old = updated.parameters.get(key)
+            if record.status != ParameterStatus.CONFIRMED and record.confirmed_by is not None:
+                raise StateManagerError(
+                    f"Parameter {key!r} cannot have confirmed_by without CONFIRMED status"
+                )
+            if context.kind == WriterKind.AGENT and record.confirmed_by is not None:
+                raise StateManagerError("Agents cannot write user confirmation identity")
+            if record.status == ParameterStatus.CONFIRMED:
+                if context.kind != WriterKind.USER or key not in confirmation_ids:
+                    raise StateManagerError(
+                        f"Parameter {key!r} requires an explicit user confirmation command"
+                    )
+            if old and old.role != record.role:
+                change = role_changes.get(key)
+                if (
+                    context.kind != WriterKind.USER
+                    or change is None
+                    or change.from_role != old.role
+                    or change.to_role != record.role
+                    or change.approved_by != context.actor
+                ):
+                    raise StateManagerError(f"Role change for {key!r} requires user approval")
+                changed.add(f"parameter_role:{key}")
             if (
                 old
-                and old.role == ParameterRole.FIXED_INPUT
-                and key not in patch.authorized_fixed_input_ids
-            ):
-                raise FixedInputWriteError(f"Modification of fixed input {key!r} is not authorized")
-            if record.status == ParameterStatus.MISSING:
-                if record.value is not None:
-                    raise StateManagerError("A MISSING parameter cannot carry a value")
-            elif record.status != ParameterStatus.UNAVAILABLE and record.value is None:
-                raise StateManagerError(
-                    f"Parameter {key!r} has status {record.status} but no value"
+                and old.role in {ParameterRole.FIXED_INPUT, ParameterRole.HARD_CONSTRAINT}
+                and (
+                    old.value != record.value or old.unit != record.unit
+                    or old.applies_to_case != record.applies_to_case
+                    or (old.status == ParameterStatus.CONFIRMED and record.status != old.status)
                 )
-            expected_dimension = UNIT_DIMENSIONS.get(key)
-            if record.value is not None:
-                if not record.unit:
-                    raise StateManagerError(f"Parameter {key!r} requires an explicit unit")
-                try:
-                    numeric_value = float(record.value)
-                    if not math.isfinite(numeric_value) or numeric_value <= 0:
-                        raise ValueError(f"Parameter {key!r} must be finite and positive")
-                    normalize(numeric_value, record.unit, expected_dimension)
-                except (UnitError, TypeError, ValueError) as exc:
-                    raise StateManagerError(str(exc)) from exc
-            if record.status == ParameterStatus.CONFIRMED and record.confirmed_by is None:
-                record.confirmed_by = patch.actor
+                and (
+                    context.kind != WriterKind.USER
+                    or key not in context.approved_parameter_ids
+                )
+            ):
+                raise FixedInputWriteError(f"Modification of locked parameter {key!r} is not authorized")
+            if record.status == ParameterStatus.CONFIRMED:
+                confirmation = next(e for e in patch.confirmation_events if e.parameter_id == key)
+                if (
+                    confirmation.confirmed_by != context.actor
+                    or record.confirmed_by not in {None, confirmation.confirmed_by}
+                ):
+                    raise StateManagerError(f"Confirmation actor mismatch for {key!r}")
+                record.confirmed_by = confirmation.confirmed_by
             if record.source is None:
                 record.source = patch.source
-            record.revision = (old.revision + 1) if old else max(record.revision, 1)
+            try:
+                self.parameter_registry.validate_record(key, record)
+            except ParameterSchemaError as exc:
+                raise StateManagerError(str(exc)) from exc
+            record.revision = (old.revision + 1) if old else 1
+            if key not in confirmation_ids and key in updated.confirmations:
+                del updated.confirmations[key]
+                changed.add("confirmations")
             updated.parameters[key] = record
             changed.add(key)
-        for key, value in patch.state_updates.items():
-            if key in {"design_id", "state_version", "event_history", "event_log_refs"}:
-                raise StateManagerError(f"State field {key!r} is managed by StateManager")
-            if not hasattr(updated, key):
-                raise StateManagerError(f"Unknown DesignState field: {key!r}")
-            setattr(updated, key, value)
-            changed.add(key)
-        invalidated = invalidate_dependents(updated, changed)
+        for constraint in patch.constraint_changes:
+            self._validate_constraint(constraint)
+            existing = next(
+                (item for item in updated.constraints if item.id == constraint.id), None
+            )
+            requires_approval = bool(
+                existing and (existing.approved or existing.severity.value == "HARD")
+            )
+            if constraint.approved and (
+                context.kind != WriterKind.USER
+                or constraint.id not in context.approved_constraint_ids
+            ):
+                raise StateManagerError(
+                    f"Constraint {constraint.id!r} approval requires a trusted user context"
+                )
+            if existing and existing != constraint and (
+                context.kind != WriterKind.USER
+                or (requires_approval and constraint.id not in context.approved_constraint_ids)
+            ):
+                raise StateManagerError(
+                    f"Constraint {constraint.id!r} requires user approval to change"
+                )
+            if existing:
+                constraint = constraint.model_copy(update={"revision": existing.revision + 1})
+                updated.constraints = [
+                    constraint if item.id == constraint.id else item for item in updated.constraints
+                ]
+            else:
+                updated.constraints.append(
+                    constraint.model_copy(update={"revision": 1})
+                )
+            changed.add("constraints")
+            changed.add(f"constraint:{constraint.id}")
+        for operating_case in patch.operating_case_changes:
+            existing_case = next(
+                (
+                    item
+                    for item in updated.operating_cases
+                    if item.case_id == operating_case.case_id
+                ),
+                None,
+            )
+            operating_case = operating_case.model_copy(
+                update={"revision": existing_case.revision + 1 if existing_case else 1}
+            )
+            updated.operating_cases = [
+                item for item in updated.operating_cases if item.case_id != operating_case.case_id
+            ]
+            updated.operating_cases.append(operating_case)
+            changed.add(f"operating_case:{operating_case.case_id}")
+            changed.add("operating_cases")
+        if patch.candidate_additions:
+            changed.add("candidate_designs")
+        if patch.confirmation_events:
+            updated.confirmations.update(
+                {
+                    event.parameter_id: {
+                        "confirmed_by": event.confirmed_by,
+                        "reason": event.reason,
+                    }
+                    for event in patch.confirmation_events
+                }
+            )
+            changed.add("confirmations")
+        if patch.rule_set_change is not None:
+            if context.kind == WriterKind.AGENT:
+                raise StateManagerError("Rule set changes require a trusted user or system context")
+            updated.knowledge_rule_set_version = patch.rule_set_change.version
+            changed.add("knowledge_rule_set_version")
         next_version = expected_version + 1
+        updated.state_version = next_version
+        invalidated = invalidate_dependents(updated, changed)
+        # New candidates are evaluated against this patch's final inputs. They must
+        # not be invalidated by the very change that creates them.
+        updated.candidate_designs.extend(
+            _snapshot_candidate_dependencies(candidate, updated)
+            for candidate in patch.candidate_additions
+        )
         event = StateEvent(
             design_id=design_id,
             from_version=expected_version,
             to_version=next_version,
             changed_fields=sorted(changed),
             source=patch.source,
-            actor=patch.actor,
+            actor=context.actor or patch.actor,
             occurred_at=datetime.now(UTC),
-            details={"invalidated_objects": invalidated.invalidated_objects},
+            details={
+                "invalidated_objects": invalidated.invalidated_objects,
+                "confirmation_events": [e.model_dump(mode="json") for e in patch.confirmation_events],
+                "role_changes": [e.model_dump(mode="json") for e in patch.role_changes],
+                "rule_set_change": (
+                    patch.rule_set_change.model_dump(mode="json") if patch.rule_set_change else None
+                ),
+            },
         )
         updated.state_version = next_version
         updated.event_history.append(event)
         updated.event_log_refs.append(event.event_id)
+        updated = self._validate_state(updated)
         self.repository.save(updated, expected_version)
         return updated
 
+    def confirm_parameter(
+        self,
+        design_id: str,
+        expected_version: int,
+        parameter_id: str,
+        actor: str,
+        reason: str | None = None,
+    ) -> DesignState:
+        current = self.get_design(design_id)
+        record = current.parameters.get(parameter_id)
+        if record is None:
+            raise StateManagerError(f"Unknown parameter: {parameter_id}")
+        return self.apply_patch(
+            design_id,
+            expected_version,
+            StatePatch(
+                source="user",
+                actor=actor,
+                parameter_changes={
+                    parameter_id: record.model_copy(
+                        update={"status": ParameterStatus.CONFIRMED, "confirmed_by": actor}
+                    )
+                },
+                confirmation_events=[
+                    ConfirmationEvent(parameter_id=parameter_id, confirmed_by=actor, reason=reason)
+                ],
+            ),
+            context=WriteContext(kind=WriterKind.USER, actor=actor),
+        )
+
+    def change_parameter_role(
+        self,
+        design_id: str,
+        expected_version: int,
+        parameter_id: str,
+        to_role: ParameterRole,
+        actor: str,
+    ) -> DesignState:
+        current = self.get_design(design_id)
+        record = current.parameters.get(parameter_id)
+        if record is None:
+            raise StateManagerError(f"Unknown parameter: {parameter_id}")
+        return self.apply_patch(
+            design_id,
+            expected_version,
+            StatePatch(
+                source="user",
+                actor=actor,
+                parameter_changes={
+                    parameter_id: record.model_copy(
+                        update={
+                            "role": to_role,
+                            # A role change changes the meaning of the value; the old
+                            # confirmation must be reviewed again by the user.
+                            "status": (
+                                ParameterStatus.SUGGESTED
+                                if record.status == ParameterStatus.CONFIRMED
+                                else record.status
+                            ),
+                            "confirmed_by": None,
+                        }
+                    )
+                },
+                role_changes=[
+                    RoleChange(
+                        parameter_id=parameter_id,
+                        from_role=record.role,
+                        to_role=to_role,
+                        approved_by=actor,
+                    )
+                ],
+            ),
+            context=WriteContext(
+                kind=WriterKind.USER, actor=actor,
+                approved_parameter_ids=frozenset({parameter_id}),
+            ),
+        )
+
+    def get_quantity(self, design_id: str, parameter_id: str, target_unit: str) -> float:
+        record = self.get_design(design_id).parameters.get(parameter_id)
+        if (
+            record is None or record.value is None or record.unit is None
+            or record.status not in {
+                ParameterStatus.PROVIDED, ParameterStatus.SUGGESTED, ParameterStatus.CONFIRMED
+            }
+        ):
+            raise StateManagerError(f"Parameter {parameter_id!r} has no usable quantity")
+        try:
+            return self.parameter_registry.convert(
+                parameter_id, record.value, record.unit, target_unit
+            )
+        except ParameterSchemaError as exc:
+            raise StateManagerError(str(exc)) from exc
+
+    def readiness_for(self, design_id: str, stage: str) -> ReadinessResult:
+        return readiness_for(
+            self.get_design(design_id), stage, self.stage_registry,
+            parameter_registry=self.parameter_registry,
+        )
+
     def list_missing_for(self, design_id: str, stage: str) -> list[ParameterRecord]:
         state = self.get_design(design_id)
+        readiness = self.readiness_for(design_id, stage)
+        if not readiness.not_configured:
+            return readiness.missing
         return [
             record
             for record in state.parameters.values()
             if record.status == ParameterStatus.MISSING and stage in record.required_for
         ]
+
+    def _validate_constraint(self, constraint: ConstraintRecord) -> None:
+        if self.parameter_registry.get(constraint.parameter) is None:
+            raise StateManagerError(
+                f"Unknown constrained parameter: {constraint.parameter!r}"
+            )
+        targets = (
+            constraint.target
+            if isinstance(constraint.target, (list, tuple, set, frozenset))
+            else (constraint.target,)
+        )
+        for target in targets:
+            try:
+                self.parameter_registry.validate(
+                    constraint.parameter, target, constraint.unit
+                )
+            except ParameterSchemaError as exc:
+                raise StateManagerError(str(exc)) from exc
+
+    def _validate_state(self, state: DesignState) -> DesignState:
+        try:
+            state = DesignState.model_validate(state.model_dump())
+            for key, record in state.parameters.items():
+                self.parameter_registry.validate_record(key, record)
+            for candidate in state.candidate_designs:
+                for key, record in candidate.parameters.items():
+                    self.parameter_registry.validate_record(key, record)
+            for constraint in state.constraints:
+                self._validate_constraint(constraint)
+        except (ValidationError, ParameterSchemaError) as exc:
+            raise StateManagerError(str(exc)) from exc
+        return state
 
     def invalidate_dependents(
         self, design_id: str, changed_fields: set[str], expected_version: int
@@ -155,8 +502,8 @@ class StateManager:
                 f"Expected version {expected_version}, current version is {current.state_version}"
             )
         updated = current.model_copy(deep=True)
-        result = invalidate_dependents(updated, changed_fields)
         updated.state_version += 1
+        result = invalidate_dependents(updated, changed_fields)
         event = StateEvent(
             design_id=design_id,
             from_version=expected_version,
@@ -167,5 +514,6 @@ class StateManager:
         )
         updated.event_history.append(event)
         updated.event_log_refs.append(event.event_id)
+        updated = self._validate_state(updated)
         self.repository.save(updated, expected_version)
         return updated, result

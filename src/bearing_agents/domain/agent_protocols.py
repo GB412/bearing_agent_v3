@@ -2,8 +2,16 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from bearing_agents.domain.enums import AgentResultStatus, RuleStatus
+from bearing_agents.domain.candidates import CandidateDesign
+from bearing_agents.domain.constraints import ConstraintRecord
+from bearing_agents.domain.enums import (
+    AgentResultStatus,
+    ParameterRole,
+    RuleStatus,
+    TaskStatus,
+)
 from bearing_agents.domain.events import StateEvent
+from bearing_agents.domain.operating_cases import OperatingCase
 from bearing_agents.domain.parameters import ParameterRecord
 
 
@@ -13,7 +21,7 @@ class TaskRecord(BaseModel):
     id: str
     action: str
     agent: str
-    status: str
+    status: TaskStatus
     dependencies: list[str] = Field(default_factory=list)
     input_version: int = Field(ge=0)
     output_ref: str | None = None
@@ -36,10 +44,41 @@ class StatePatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     parameters: dict[str, ParameterRecord] = Field(default_factory=dict)
+    parameter_changes: dict[str, ParameterRecord] = Field(default_factory=dict)
+    constraint_changes: list[ConstraintRecord] = Field(default_factory=list)
+    operating_case_changes: list[OperatingCase] = Field(default_factory=list)
+    candidate_additions: list[CandidateDesign] = Field(default_factory=list)
+    confirmation_events: list["ConfirmationEvent"] = Field(default_factory=list)
+    role_changes: list["RoleChange"] = Field(default_factory=list)
+    rule_set_change: "RuleSetChange | None" = None
     state_updates: dict[str, Any] = Field(default_factory=dict)
     source: str
     actor: str | None = None
     authorized_fixed_input_ids: set[str] = Field(default_factory=set)
+
+
+class ConfirmationEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    parameter_id: str
+    confirmed_by: str
+    reason: str | None = None
+
+
+class RoleChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    parameter_id: str
+    from_role: ParameterRole
+    to_role: ParameterRole
+    approved_by: str
+
+
+class RuleSetChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: str = Field(min_length=1)
+    source_ref: str = Field(min_length=1)
 
 
 class AgentResult(BaseModel):

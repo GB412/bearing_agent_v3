@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class OperatingCase(BaseModel):
@@ -11,6 +11,7 @@ class OperatingCase(BaseModel):
     load_direction: str | None = None
     is_steady_state: bool = True
     description: str | None = None
+    revision: int = Field(default=0, ge=0)
 
 
 class AssumptionRecord(BaseModel):

@@ -25,6 +25,7 @@ from bearing_agents.core.state_manager import StateManager
 from bearing_agents.infra.state_repository import SQLiteStateRepository
 from bearing_agents.domain.parameters import ParameterRecord
 from bearing_agents.domain.enums import ParameterRole, ParameterStatus
+from bearing_agents.domain.write_context import WriteContext, WriterKind
 
 manager = StateManager(SQLiteStateRepository("bearing-designs.sqlite3"))
 design = manager.create_design(user_goal="Create a new bearing design")
@@ -32,6 +33,7 @@ design = manager.apply_patch(
     design.design_id,
     expected_version=design.state_version,
     patch={
+        "source": "user",
         "parameters": {
             "journal_diameter": ParameterRecord(
                 value=100,
@@ -42,9 +44,12 @@ design = manager.apply_patch(
             )
         }
     },
+    context=WriteContext(kind=WriterKind.USER, actor="designer"),
 )
 print(manager.get_design(design.design_id).parameters["journal_diameter"])
 ```
+
+The same example can be exercised offline with `python -m pytest -q tests/test_readme_smoke.py`.
 
 All engineering values must carry explicit units and provenance. An empty design contains no
 invented geometry, load, speed, or operating case. The SQLite file is the local authoritative

@@ -11,6 +11,7 @@ from bearing_agents.domain.agent_protocols import StatePatch
 from bearing_agents.domain.candidates import CandidateDesign
 from bearing_agents.domain.enums import ParameterRole, ParameterStatus
 from bearing_agents.domain.parameters import ParameterRecord
+from bearing_agents.domain.write_context import WriteContext, WriterKind
 from bearing_agents.infra.state_repository import SQLiteStateRepository
 
 
@@ -75,19 +76,7 @@ def test_confirming_suggested_design_variable_preserves_role(manager):
             },
         },
     )
-    confirmed = manager.apply_patch(
-        design.design_id,
-        1,
-        {
-            "source": "user",
-            "actor": "designer",
-            "parameters": {
-                "bearing_width": parameter(
-                    60, ParameterStatus.CONFIRMED, ParameterRole.DESIGN_VARIABLE
-                )
-            },
-        },
-    )
+    confirmed = manager.confirm_parameter(design.design_id, 1, "bearing_width", "designer")
     record = confirmed.parameters["bearing_width"]
     assert record.role == ParameterRole.DESIGN_VARIABLE
     assert record.status == ParameterStatus.CONFIRMED
@@ -147,6 +136,11 @@ def test_fixed_input_modification_requires_explicit_authorization(manager):
             "parameters": {"journal_diameter": parameter(110)},
             "authorized_fixed_input_ids": ["journal_diameter"],
         },
+        context=WriteContext(
+            kind=WriterKind.USER,
+            actor="designer",
+            approved_parameter_ids=frozenset({"journal_diameter"}),
+        ),
     )
     assert updated.parameters["journal_diameter"].value == 110
 
@@ -208,7 +202,7 @@ def test_derived_values_and_candidate_are_staled_after_diameter_change(manager):
     seeded = manager.apply_patch(
         design.design_id,
         1,
-        {
+            {
             "source": "calculator",
             "parameters": {
                 "surface_speed": ParameterRecord(
@@ -224,16 +218,14 @@ def test_derived_values_and_candidate_are_staled_after_diameter_change(manager):
                     status=ParameterStatus.PROVIDED,
                 ),
             },
-            "state_updates": {
-                "candidate_designs": [
-                    CandidateDesign(
-                        candidate_id="c1",
-                        version=1,
-                        source_parameter_revisions={"journal_diameter": 1},
-                        precheck_status="PRECHECK_PASS",
-                    )
-                ]
-            },
+            "candidate_additions": [
+                CandidateDesign(
+                    candidate_id="c1",
+                    version=1,
+                    source_parameter_revisions={"journal_diameter": 1},
+                    precheck_status="PRECHECK_PASS",
+                )
+            ],
         },
     )
     updated = manager.apply_patch(
@@ -244,6 +236,11 @@ def test_derived_values_and_candidate_are_staled_after_diameter_change(manager):
             "authorized_fixed_input_ids": ["journal_diameter"],
             "parameters": {"journal_diameter": parameter(120)},
         },
+        context=WriteContext(
+            kind=WriterKind.USER,
+            actor="designer",
+            approved_parameter_ids=frozenset({"journal_diameter"}),
+        ),
     )
     assert updated.parameters["surface_speed"].status == ParameterStatus.STALE
     assert updated.parameters["mean_pressure"].status == ParameterStatus.STALE

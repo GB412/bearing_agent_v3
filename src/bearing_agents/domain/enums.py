@@ -73,6 +73,13 @@ class TaskStatus(StrEnum):
     STALE = "STALE"
 
 
+class ParameterValueType(StrEnum):
+    POSITIVE_NUMBER = "POSITIVE_NUMBER"
+    NON_NEGATIVE_NUMBER = "NON_NEGATIVE_NUMBER"
+    CATEGORY = "CATEGORY"
+    TEXT = "TEXT"
+
+
 class AgentResultStatus(StrEnum):
     SUCCESS = "SUCCESS"
     NEEDS_REVIEW = "NEEDS_REVIEW"

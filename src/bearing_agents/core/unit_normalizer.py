@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass
 
 
@@ -27,6 +28,10 @@ UNITS: dict[str, UnitDefinition] = {
 
 
 def normalize(value: float, unit: str, expected_dimension: str | None = None) -> tuple[float, str]:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise UnitError("Value must be a numeric value, not bool or text")
+    if not math.isfinite(value):
+        raise UnitError("Value must be finite")
     try:
         definition = UNITS[unit]
     except KeyError as exc:
