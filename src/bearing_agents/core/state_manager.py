@@ -30,7 +30,6 @@ from bearing_agents.domain.parameter_registry import (
 )
 from bearing_agents.domain.parameters import ParameterRecord
 from bearing_agents.domain.proposals import (
-    ParameterChangeProposal,
     ProposalDecision,
     ProposalResolution,
     ProposalStatus,
