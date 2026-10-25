@@ -6,7 +6,8 @@ from bearing_agents.requirements.contracts import RequirementProposal
 
 _NUM = r"([0-9]+(?:\.[0-9]+)?)"
 _PATTERNS = (
-    ("journal_diameter", rf"(?:轴径|轴颈直径|D\s*=)\s*[:：=]?\s*{_NUM}\s*(mm|毫米|m|米)(?![A-Za-z])"),
+    ("journal_diameter",
+     rf"(?:轴径|轴颈直径|D\s*=)\s*[:：=]?\s*{_NUM}\s*(mm|毫米|m|米)(?![A-Za-z])"),
     ("load", rf"(?:径向载荷|轴承载荷|载荷|F\s*=)\s*[:：=]?\s*{_NUM}\s*(kN|N)(?![A-Za-z])"),
     ("rotational_speed", rf"(?:转速|n\s*=)\s*[:：=]?\s*{_NUM}\s*(r/min|rpm)(?![A-Za-z])"),
 )
