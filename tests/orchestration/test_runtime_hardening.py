@@ -1,5 +1,7 @@
 """Regression tests for trusted runtime gates and partial task startup."""
 
+from tests.orchestration.conftest import seed_ready
+
 from bearing_agents.core.readiness import StageRequirementRegistry
 from bearing_agents.core.state_manager import StateManager, StateManagerError
 from bearing_agents.domain.agent_protocols import PlanDecision
@@ -7,8 +9,6 @@ from bearing_agents.domain.enums import TaskStatus
 from bearing_agents.infra.state_repository import SQLiteStateRepository
 from bearing_agents.orchestration.contracts import CATALOG, policy_guard
 from bearing_agents.orchestration.workflow import open_runtime
-
-from tests.orchestration.conftest import seed_ready
 
 
 def test_custom_r2_registry_controls_observe_and_dispatch(tmp_path):
