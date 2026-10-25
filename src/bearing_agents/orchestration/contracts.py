@@ -86,8 +86,9 @@ class PlannerContext:
 
     action_descriptions: tuple[tuple[str, str, str | None, bool], ...] = ()
     recent_failures: tuple[str, ...] = ()
-    remaining_steps: int = 0
-    remaining_errors: int = 0
+    # None means the caller did not supply a budget; zero means it is exhausted.
+    remaining_steps: int | None = None
+    remaining_errors: int | None = None
 
 
 def target_exists(state: DesignState, reference: str | None) -> bool:

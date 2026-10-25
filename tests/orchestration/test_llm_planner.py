@@ -1,6 +1,7 @@
 import json
 
 import pytest
+from examples.pr02b_real_experiment import run_cases
 
 from bearing_agents.orchestration.contracts import (
     CATALOG,
@@ -53,6 +54,32 @@ def test_structured_proposal_is_completed_from_trusted_catalog():
     assert decision.selected_agent == "requirements_fake"
     assert decision.state_version == 7
     assert decision.requires_confirmation is False
+
+
+def test_unspecified_context_budget_is_not_reported_as_exhausted():
+    model = StubModel([{"action": "clarify_requirement", "rationale": "load is missing"}])
+    LLMPlanner(model=model, max_retries=0).plan(summary())
+
+    payload = json.loads(model.prompts[0].split("\n\n", 1)[1])
+    assert payload["remaining_budget"] == {"steps": None, "errors": None}
+
+
+def test_real_experiment_entrypoint_passes_explicit_budget(manager):
+    model = StubModel([
+        {"action": "clarify_requirement", "rationale": "synthetic fixture"}
+    ] * 7)
+    planner = LLMPlanner(model=model, max_retries=0)
+
+    records, _totals = run_cases(manager, planner)
+
+    assert len(model.prompts) == 7
+    assert all(
+        record["remaining_steps"] == 12 and record["remaining_errors"] == 3
+        for record in records
+    )
+    for prompt in model.prompts:
+        payload = json.loads(prompt.split("\n\n", 1)[1])
+        assert payload["remaining_budget"] == {"steps": 12, "errors": 3}
 
 
 def test_extra_fields_are_rejected_with_one_bounded_retry():

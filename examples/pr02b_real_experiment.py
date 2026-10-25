@@ -12,7 +12,12 @@ from bearing_agents.domain.enums import TaskStatus
 from bearing_agents.domain.tasks import TaskCommand, engineering_digest
 from bearing_agents.domain.write_context import WriteContext, WriterKind
 from bearing_agents.infra.state_repository import SQLiteStateRepository
-from bearing_agents.orchestration.contracts import CATALOG, observe_state, policy_guard
+from bearing_agents.orchestration.contracts import (
+    CATALOG,
+    PlannerContext,
+    observe_state,
+    policy_guard,
+)
 from bearing_agents.orchestration.llm_planner import LLMPlanner, PlannerError
 
 USER = WriteContext(kind=WriterKind.USER, actor="synthetic-fixture-author")
@@ -84,18 +89,29 @@ def run_cases(manager, planner):
     records = []
     for fixture_id, state, goal, target_ref, oracle in build_cases(manager):
         summary = observe_state(state, goal, target_ref)
+        context = PlannerContext(
+            action_descriptions=tuple(
+                (name, spec.effect_class, spec.required_gate, spec.supported)
+                for name, spec in sorted(planner.catalog.items())
+            ),
+            recent_failures=(),
+            remaining_steps=12,
+            remaining_errors=3,
+        )
         record = {
             "fixture_id": fixture_id, "fixture_version": "1",
             "source_class": "SYNTHETIC_WORKFLOW", "demo_only": True,
             "UTC_timestamp": datetime.now(UTC).isoformat(),
             "oracle_acceptable_actions": sorted(oracle),
             "input_domain_version": summary.domain_version,
+            "remaining_steps": context.remaining_steps,
+            "remaining_errors": context.remaining_errors,
             "selected_action": None, "planner_oracle_match": False,
             "parsed_ok": False, "guard_verdict": "NOT_EVALUATED",
             "guard_reason_code": "PLANNER_ERROR",
         }
         try:
-            decision = planner.plan(summary)
+            decision = planner.plan(summary, context=context)
             guard = policy_guard(decision, state, target_ref, planner.catalog)
             record.update(
                 selected_action=decision.action, rationale=decision.rationale,
