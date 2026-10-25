@@ -183,7 +183,9 @@ class SQLiteStateRepository:
             ).fetchone()
             if row:
                 if row[0] != state.design_id or row[1] != intent_hash:
-                    raise StateConflictError("Interaction operation ID reused with different intent")
+                    raise StateConflictError(
+                        "Interaction operation ID reused with different intent"
+                    )
                 return InteractionReceipt.model_validate_json(row[2]).model_copy(
                     update={"replayed":True}
                 )
