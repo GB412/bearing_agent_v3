@@ -6,8 +6,12 @@ from uuid import uuid4
 
 from bearing_agents.core.state_manager import StateManager, StateManagerError, VersionConflictError
 from bearing_agents.domain.agent_protocols import StatePatch
-from bearing_agents.domain.enums import ConstraintOperator, ConstraintSeverity, ParameterRole, ParameterStatus
-from bearing_agents.domain.proposals import ProposalStatus
+from bearing_agents.domain.enums import (
+    ConstraintOperator,
+    ConstraintSeverity,
+    ParameterRole,
+    ParameterStatus,
+)
 from bearing_agents.domain.write_context import WriteContext, WriterKind
 from bearing_agents.infra.state_repository import StateConflictError
 from bearing_agents.requirements.contracts import InteractionReceipt, UserTurn
