@@ -8,7 +8,7 @@ from bearing_agents.requirements.contracts import RequirementProposal, VerifiedR
 
 _CANONICAL_UNIT = {"journal_diameter":"mm","load":"N","rotational_speed":"rpm","bearing_width":"mm"}
 _SAFE_NUMBER = re.compile(r"(?<![\d.])\d+(?:\.\d+)?(?![\d.])")
-_NEGATED = ("不是", "不对", "不要", "并非", "错误", "错了")
+_NEGATED = ("不是", "不对", "不要", "并非", "错误", "错了", "改成", "改为", "更正")
 _UNCERTAIN = ("估计", "大约", "大概", "可能", "不确定", "左右", "约为", "猜")
 _SCOPE = {"supported":"cylindrical_radial_hydrodynamic","unsupported":"unsupported"}
 
@@ -46,6 +46,22 @@ def verify(text: str, proposal: RequirementProposal, registry: ParameterSchemaRe
         return decision("REJECT","STEADY_MISMATCH")
     if proposal.kind not in {"parameter","constraint"}:
         return decision("REJECT","UNSUPPORTED_KIND")
+    if proposal.kind == "constraint" and proposal.field_id == "material":
+        value = proposal.value
+        if not isinstance(value, str) or not value.strip() or proposal.unit != "1":
+            return decision("REJECT", "MATERIAL_VALUE_INVALID")
+        if not quote.endswith(value):
+            return decision("REJECT", "MATERIAL_QUOTE_MISMATCH")
+        if proposal.operator == "NOT_IN":
+            prefixes = ("不能用", "禁止使用", "不得使用")
+        elif proposal.operator == "IN":
+            prefixes = ("材料只允许", "材料仅允许", "材料必须使用")
+        else:
+            return decision("REJECT", "MATERIAL_OPERATOR_INVALID")
+        if not any(quote.startswith(prefix) for prefix in prefixes):
+            return decision("REJECT", "MATERIAL_SEMANTICS_MISMATCH")
+        registry.validate("material", value, "1")
+        return decision("ACCEPT", "VERIFIED", value, "1")
     if proposal.kind == "constraint":
         if proposal.field_id != "bearing_width" or proposal.operator != "LE":
             return decision("CLARIFY", "CONSTRAINT_UNSUPPORTED")
