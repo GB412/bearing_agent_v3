@@ -10,7 +10,6 @@ _PATTERNS = (
     ("load", rf"(?:径向载荷|轴承载荷|载荷|F\s*=)\s*[:：=]?\s*{_NUM}\s*(kN|N)\b?"),
     ("rotational_speed", rf"(?:转速|n\s*=)\s*[:：=]?\s*{_NUM}\s*(r/min|rpm)\b?"),
 )
-_NEGATIVE = ("不是", "不对", "不要", "并非", "错误", "错了", "不确定", "估计", "大约", "大概", "可能", "约为", "左右", "猜")
 _SCOPE_UNSUPPORTED = ("滚动轴承", "球轴承", "圆锥滚子", "滚子轴承", "可倾瓦", "静压轴承")
 _SCOPE_SUPPORTED = ("圆柱径向动压", "径向动压滑动轴承", "圆柱滑动轴承")
 _DYNAMIC = ("动态载荷", "载荷周期", "两个工况", "多工况", "变载荷", "非稳态")
@@ -23,7 +22,8 @@ def extract(text: str) -> list[RequirementProposal]:
             quote = match.group()
             prefix = text[max(0, match.start()-15):match.start()]
             context = prefix + quote + text[match.end():min(len(text), match.end()+6)]
-            modality = "UNCERTAIN" if any(t in context for t in ("估计", "大概", "大约", "不确定", "左右", "约为")) else "EXPLICIT"
+            uncertain = ("估计", "大概", "大约", "不确定", "左右", "约为")
+            modality = "UNCERTAIN" if any(t in context for t in uncertain) else "EXPLICIT"
             if any(t in context for t in ("不是", "不对", "并非", "不要", "错了", "错误")):
                 modality = "NEGATED"
             unit = match.group(2)
