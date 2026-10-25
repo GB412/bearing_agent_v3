@@ -37,6 +37,7 @@ class GraphState(TypedDict, total=False):
     termination_reason: str | None
     confirmation: dict | None
     trace: list[dict]
+    questions: list[dict]
 
 
 @dataclass(frozen=True)
