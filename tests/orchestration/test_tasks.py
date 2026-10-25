@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -10,6 +11,7 @@ from bearing_agents.domain.state import DesignState
 from bearing_agents.domain.tasks import TaskCommand, engineering_digest
 from bearing_agents.domain.write_context import WriteContext, WriterKind
 from bearing_agents.infra.state_repository import SQLiteStateRepository, StateConflictError
+from bearing_agents.orchestration.contracts import task_plan_view
 
 SYSTEM = WriteContext(kind=WriterKind.SYSTEM, actor="runtime")
 USER = WriteContext(kind=WriterKind.USER, actor="offline-user")
@@ -120,3 +122,51 @@ def test_legacy_ambiguous_task_cannot_start(manager):
         manager.apply_task_command(d.design_id, 1, TaskCommand(
             operation_id="start", task_id="t1", kind="start", reason="Run",
         ), context=SYSTEM)
+
+
+def test_old_sqlite_payload_does_not_invent_predecessor_freshness(manager):
+    legacy = DesignState(design_id="legacy", task_plan=[
+        task("old").model_copy(update={"status": TaskStatus.COMPLETED}),
+        task("new", depends_on_task_ids=["old"]),
+    ])
+    manager.repository.create(legacy)
+    with pytest.raises(StateManagerError, match="Legacy predecessor freshness"):
+        manager.apply_task_command("legacy", 0, TaskCommand(
+            operation_id="start", task_id="new", kind="start", reason="Run old plan",
+        ), context=SYSTEM)
+    assert manager.get_design("legacy").state_version == 0
+
+
+def test_actual_pre_pr02_sqlite_json_is_read_without_migration(manager):
+    import json
+
+    raw = {"design_id": "old-json", "task_plan": [
+        {"id": "old-task", "action": "produce_summary", "agent": "old-fake",
+         "status": "COMPLETED", "dependencies": ["load"], "input_version": 0},
+    ]}
+    with closing(sqlite3.connect(manager.repository.path)) as db, db:
+        db.execute("INSERT INTO designs VALUES (?, ?, ?)", ("old-json", 0, json.dumps(raw)))
+    read = manager.get_design("old-json")
+    assert read.task_plan[0].depends_on_task_ids == []
+    with closing(sqlite3.connect(manager.repository.path)) as db:
+        assert json.loads(db.execute("SELECT payload FROM designs WHERE design_id = ?",
+                                     ("old-json",)).fetchone()[0]) == raw
+        assert db.execute("SELECT count(*) FROM task_operations").fetchone()[0] == 0
+
+
+def test_sqlite_repository_closes_file_handles(tmp_path):
+    path = tmp_path / "close-test.sqlite"
+    repository = SQLiteStateRepository(path)
+    repository.create(DesignState(design_id="close-test"))
+    assert repository.get("close-test") is not None
+    path.unlink()  # Windows rejects this if a repository connection remains open.
+
+
+def test_task_plan_view_is_a_disposable_projection(manager):
+    design = manager.create_design()
+    register(manager, design)
+    state = manager.get_design(design.design_id)
+    view = task_plan_view(state)
+    assert view["plan_revision"] == 1 and view["replan_reason"]
+    view["tasks"].clear()
+    assert len(manager.get_design(design.design_id).task_plan) == 1

@@ -72,13 +72,19 @@ class Runtime:
             raise PermissionError("Checkpoint thread is bound to another design")
         if previous.next:
             raise ValueError("An unfinished run exists; use resume() or recover()")
-        return self.graph.invoke({
+        return self._output(self.graph.invoke({
             "design_id": design_id, "thread_id": config["configurable"]["thread_id"],
             "run_id": str(uuid4()), "goal": goal, "target_ref": target_ref,
             "steps": 0, "errors": 0, "same_action_count": 0, "last_signature": "",
             "termination_reason": None, "confirmation": None, "trace": [],
             "current_task_id": "", "last_result_ref": "",
-        }, config, durability="sync")
+        }, config, durability="sync"))
+
+    @staticmethod
+    def _output(result):
+        if result.get("__interrupt__"):
+            return dict(result, termination_reason="WAITING_FOR_USER")
+        return result
 
     def recover(self, design_id):
         config = self._config(design_id)
@@ -89,7 +95,7 @@ class Runtime:
             raise ValueError("No persistent run to recover")
         if not snapshot.next:
             return snapshot.values
-        return self.graph.invoke(None, config, durability="sync")
+        return self._output(self.graph.invoke(None, config, durability="sync"))
 
     @staticmethod
     def _continue(state):
@@ -121,6 +127,7 @@ class Runtime:
             rationale=state["rationale"], expected_result="DEMO_ONLY",
             state_version=state["decision_version"],
             requires_confirmation=state.get("requires_confirmation", False),
+            input_refs=state.get("input_refs", []),
         )
 
     def _observe(self, state):
@@ -151,6 +158,7 @@ class Runtime:
             "action": decision.action, "executor": decision.selected_agent,
             "rationale": decision.rationale, "decision_version": decision.state_version,
             "requires_confirmation": decision.requires_confirmation,
+            "input_refs": decision.input_refs,
             "input_digest": summary.input_digest, "steps": state["steps"] + 1,
             "last_signature": signature, "same_action_count": repeats,
             "termination_reason": "NO_PROGRESS" if repeats >= self.max_same_action else None,
@@ -312,9 +320,12 @@ class Runtime:
             ), context=SYSTEM)
             receipt = None
         if not snapshot.next:
-            return dict(snapshot.values, duplicate=bool(receipt and receipt.replayed))
-        return self.graph.invoke(Command(resume={"request_id": request_id}), config,
-                                 durability="sync")
+            reason = (("GOAL_REACHED" if accepted else "USER_REJECTED")
+                      if receipt else "VERSION_STALE")
+            return dict(snapshot.values, duplicate=bool(receipt and receipt.replayed),
+                        termination_reason=reason)
+        return self._output(self.graph.invoke(Command(resume={"request_id": request_id}), config,
+                                              durability="sync"))
 
 
 @contextmanager

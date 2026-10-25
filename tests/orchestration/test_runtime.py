@@ -142,6 +142,15 @@ def test_guard_rejects_wrong_output_schema(ready, runtime_factory):
     assert any(row.get("reason") == "SCHEMA_MISMATCH" for row in result["trace"])
 
 
+def test_guard_rejects_invented_input_refs(ready, runtime_factory):
+    class UnknownRefs(FixedPlanner):
+        def plan(self, summary):
+            return super().plan(summary).model_copy(update={"input_refs": ["invented"]})
+
+    result = runtime_factory(planner=UnknownRefs()).invoke(ready.design_id)
+    assert any(row.get("reason") == "UNKNOWN_INPUT_REF" for row in result["trace"])
+
+
 def test_f12_no_progress_is_not_hidden_by_task_versions(manager, ready, runtime_factory):
     result = runtime_factory(planner=FixedPlanner()).invoke(ready.design_id)
     assert result["termination_reason"] == "NO_PROGRESS"

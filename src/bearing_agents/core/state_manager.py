@@ -154,6 +154,9 @@ class StateManager:
             return prior
         current = self.get_design(design_id)
         if current.state_version != expected_version:
+            prior = self.repository.get_task_operation(command.operation_id, design_id, intent)
+            if prior is not None:
+                return prior
             raise VersionConflictError("Task command has a stale domain version")
         if command.expected_input_digest is not None and (
             command.expected_input_digest != engineering_digest(current)
@@ -161,6 +164,10 @@ class StateManager:
             raise VersionConflictError("Task inputs or confirmation request are stale")
         updated = current.model_copy(deep=True)
         tasks = {task.id: task for task in updated.task_plan}
+        if len(tasks) != len(updated.task_plan):
+            raise StateManagerError(
+                "Legacy task IDs are ambiguous; explicit correction is required"
+            )
         task = tasks.get(command.task_id)
         if command.kind == "register":
             proposed = command.task

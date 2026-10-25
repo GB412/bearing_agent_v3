@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 from bearing_agents.domain.state import DesignState
@@ -14,7 +15,7 @@ class SQLiteStateRepository:
 
     def __init__(self, path: str | Path):
         self.path = str(path)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS designs "
                 "(design_id TEXT PRIMARY KEY, state_version INTEGER NOT NULL, "
@@ -30,21 +31,21 @@ class SQLiteStateRepository:
         return sqlite3.connect(self.path, timeout=10)
 
     def create(self, state: DesignState) -> None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute(
                 "INSERT INTO designs (design_id, state_version, payload) VALUES (?, ?, ?)",
                 (state.design_id, state.state_version, state.model_dump_json()),
             )
 
     def get(self, design_id: str) -> DesignState | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             row = connection.execute(
                 "SELECT payload FROM designs WHERE design_id = ?", (design_id,)
             ).fetchone()
         return DesignState.model_validate_json(row[0]) if row else None
 
     def save(self, state: DesignState, expected_version: int) -> None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             cursor = connection.execute(
                 "UPDATE designs SET state_version = ?, payload = ? "
                 "WHERE design_id = ? AND state_version = ?",
@@ -64,7 +65,7 @@ class SQLiteStateRepository:
     def get_task_operation(
         self, operation_id: str, design_id: str, intent_hash: str,
     ) -> TaskReceipt | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             return self._task_receipt(connection, operation_id, design_id, intent_hash)
 
     @staticmethod
@@ -83,7 +84,7 @@ class SQLiteStateRepository:
         self, state: DesignState, expected_version: int, intent_hash: str, receipt: TaskReceipt,
     ) -> TaskReceipt:
         """Only task effects: state/event and the receipt share this single transaction."""
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
             prior = self._task_receipt(
                 connection, receipt.operation_id, state.design_id, intent_hash,

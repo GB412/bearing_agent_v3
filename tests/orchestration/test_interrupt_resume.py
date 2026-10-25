@@ -11,6 +11,7 @@ def pause(runtime, ready):
     result = runtime.invoke(ready.design_id, goal="confirmation",
                             target_ref="parameter:journal_diameter@1")
     assert "__interrupt__" in result
+    assert result["termination_reason"] == "WAITING_FOR_USER"
     request = result["confirmation"]
     assert request["target_ref"] == "parameter:journal_diameter@1"
     return request
@@ -94,3 +95,20 @@ def test_unrelated_design_cannot_reuse_checkpoint_thread(manager, runtime_factor
         runtime.invoke(second.design_id)
     with pytest.raises(PermissionError, match="another design"):
         runtime.recover(second.design_id)
+
+
+def test_f09_candidate_request_is_only_a_version_bound_protocol(manager, ready, runtime_factory):
+    design = manager.apply_patch(ready.design_id, ready.state_version, {
+        "source": "synthetic_fake", "candidate_additions": [{"candidate_id": "c1", "version": 1}],
+    })
+    runtime = runtime_factory()
+    paused = runtime.invoke(design.design_id, goal="confirmation", target_ref="candidate:c1@1")
+    request = paused["confirmation"]
+    before = manager.get_design(design.design_id)
+    manager.apply_patch(design.design_id, before.state_version, {
+        "source": "user", "rule_set_change": {"version": "synthetic-v2", "source_ref": "fixture"},
+    }, context=USER)
+    result = runtime.resume(design.design_id, request["request_id"], accepted=True, context=USER)
+    assert result["termination_reason"] == "VERSION_STALE"
+    candidate = manager.get_design(design.design_id).candidate_designs[0]
+    assert candidate.confirmation_status == "PENDING"

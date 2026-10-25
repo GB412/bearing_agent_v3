@@ -1,7 +1,9 @@
 """Small orchestration contracts and deterministic substitutes, without another domain state."""
 
 from dataclasses import dataclass
-from typing import Literal, TypedDict
+from typing import Literal
+
+from typing_extensions import TypedDict
 
 from bearing_agents.core.readiness import readiness_for
 from bearing_agents.domain.agent_protocols import AgentResult, PlanDecision, TaskRecord
@@ -23,6 +25,7 @@ class GraphState(TypedDict, total=False):
     executor: str
     rationale: str
     decision_version: int
+    input_refs: list[str]
     requires_confirmation: bool
     current_task_id: str
     last_result_ref: str
@@ -113,6 +116,17 @@ def observe_state(state: DesignState, goal: str, target_ref: str | None) -> Stat
     )
 
 
+def task_plan_view(state: DesignState) -> dict:
+    """Disposable projection of the only task list, never another writable plan."""
+    revisions = [e for e in state.event_history if e.details.get("task_command") == "register"]
+    return {
+        "goal": state.user_goal,
+        "plan_revision": revisions[-1].details["plan_revision"] if revisions else 0,
+        "replan_reason": revisions[-1].details["reason"] if revisions else None,
+        "tasks": [task.model_dump(mode="json") for task in state.task_plan[-3:]],
+    }
+
+
 class FakePlanner:
     def plan(self, summary: StateSummary) -> PlanDecision:
         if summary.goal == "simulation":
@@ -155,6 +169,9 @@ def policy_guard(
         reason = "STALE_VERSION"
     elif spec.output_schema_id != "AgentResult/v1":
         reason = "SCHEMA_MISMATCH"
+    elif any(ref not in state.parameters and not target_exists(state, ref)
+             for ref in decision.input_refs):
+        reason = "UNKNOWN_INPUT_REF"
     elif spec.required_gate and not readiness_for(state, spec.required_gate).ready:
         reason = "INPUT_NOT_READY"
     elif spec.required_gate and state.target_scope != "cylindrical_radial_hydrodynamic":
