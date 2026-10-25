@@ -4,6 +4,7 @@ Synthetic conversations are not an engineering standard or a real-LLM benchmark.
 """
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -229,7 +230,8 @@ def test_offline_examples_execute_as_real_processes(tmp_path):
     root = Path(__file__).resolve().parents[2]
     demo = subprocess.run(
         [sys.executable, str(root / "examples" / "pr03_multiturn_demo.py")],
-        cwd=root, text=True, capture_output=True, check=True,
+        cwd=root, text=True, encoding="utf-8", capture_output=True, check=True,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
     )
     records = json.loads(demo.stdout)
     assert records[-1]["replayed"] and records[-1]["input_ready"]
@@ -239,7 +241,8 @@ def test_offline_examples_execute_as_real_processes(tmp_path):
             "--db", str(tmp_path / "cli.sqlite"),
         ],
         input="圆柱径向动压滑动轴承，轴径100mm，转速1500rpm\n:quit\n",
-        cwd=root, text=True, capture_output=True, check=True,
+        cwd=root, text=True, encoding="utf-8", capture_output=True, check=True,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
     )
     assert "请提供径向载荷" in cli.stdout
 
