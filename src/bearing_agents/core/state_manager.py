@@ -46,6 +46,7 @@ from bearing_agents.domain.proposals import (
 from bearing_agents.domain.state import DesignState
 from bearing_agents.domain.tasks import TaskCommand, TaskReceipt, engineering_digest, fingerprint
 from bearing_agents.domain.write_context import WriteContext, WriterKind
+from bearing_agents.requirements.contracts import InteractionReceipt
 
 
 class StateManagerError(ValueError):
@@ -122,9 +123,13 @@ class StateManager:
         self.stage_registry = stage_registry or StageRequirementRegistry()
 
     def create_design(
-        self, user_goal: str | None = None, thread_id: str | None = None
+        self, user_goal: str | None = None, thread_id: str | None = None,
+        *, target_scope: str = "cylindrical_radial_hydrodynamic",
     ) -> DesignState:
-        state = DesignState(design_id=str(uuid4()), user_goal=user_goal, thread_id=thread_id)
+        if target_scope not in {"cylindrical_radial_hydrodynamic", "unknown", "unsupported"}:
+            raise StateManagerError("Unknown scope")
+        state = DesignState(design_id=str(uuid4()), user_goal=user_goal, thread_id=thread_id,
+                            target_scope=target_scope)
         self.repository.create(state)
         return state
 
@@ -421,6 +426,7 @@ class StateManager:
         patch: StatePatch | dict,
         *,
         context: WriteContext | None = None,
+        interaction: tuple[str, str, str] | None = None,
     ) -> DesignState:
         try:
             # model_copy()/model_construct() may contain invalid fields; even model
@@ -709,6 +715,14 @@ class StateManager:
                     }
                 )
                 changed.add("parameter_change_proposals")
+        if patch.scope_change is not None:
+            if context.kind != WriterKind.USER or patch.scope_change not in {
+                "cylindrical_radial_hydrodynamic", "unknown", "unsupported",
+            }:
+                raise StateManagerError("Scope change requires a trusted user context")
+            if current.target_scope != patch.scope_change:
+                updated.target_scope = patch.scope_change
+                changed.add("target_scope")
         if patch.rule_set_change is not None:
             if context.kind == WriterKind.AGENT:
                 raise StateManagerError("Rule set changes require a trusted user or system context")
@@ -744,7 +758,17 @@ class StateManager:
         updated.state_version = next_version
         updated.event_history.append(event)
         updated = self._validate_state(updated)
-        self.repository.save(updated, expected_version)
+        if interaction is None:
+            self.repository.save(updated, expected_version)
+        else:
+            if context.kind != WriterKind.USER:
+                raise StateManagerError("User interaction commit requires trusted USER context")
+            operation_id, intent_hash, message_id = interaction
+            receipt = InteractionReceipt(
+                operation_id=operation_id, design_id=design_id, message_id=message_id,
+                state_version=next_version,
+            )
+            self.repository.commit_interaction(updated, expected_version, intent_hash, receipt)
         return updated
 
     def resolve_parameter_proposal(
