@@ -1,11 +1,12 @@
 """Small orchestration contracts and deterministic substitutes, without another domain state."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
 from typing_extensions import TypedDict
 
-from bearing_agents.core.readiness import readiness_for
+from bearing_agents.core.readiness import ReadinessResult, readiness_for
 from bearing_agents.domain.agent_protocols import AgentResult, PlanDecision, TaskRecord
 from bearing_agents.domain.enums import AgentResultStatus, TaskStatus
 from bearing_agents.domain.state import DesignState
@@ -108,15 +109,31 @@ def target_exists(state: DesignState, reference: str | None) -> bool:
     return False
 
 
-def observe_state(state: DesignState, goal: str, target_ref: str | None) -> StateSummary:
-    gate = readiness_for(state, "R2")
+ReadinessCheck = Callable[[DesignState, str], ReadinessResult]
+
+
+def fresh_completed_actions(state: DesignState) -> frozenset[str]:
+    """Only persisted, current-input task receipts count as prerequisite evidence."""
     digest = engineering_digest(state)
-    # A legacy COMPLETED flag alone is not evidence of a current runtime result.
-    fresh_ids = {e.details.get("task_id") for e in state.event_history
-                 if e.details.get("task_command") in {"complete", "resume"}
-                 and e.details.get("input_digest") == digest}
-    done = frozenset(t.action for t in state.task_plan
-                     if t.status == TaskStatus.COMPLETED and t.id in fresh_ids)
+    fresh_ids = {
+        event.details.get("task_id")
+        for event in state.event_history
+        if event.details.get("task_command") in {"complete", "resume"}
+        and event.details.get("input_digest") == digest
+    }
+    return frozenset(
+        task.action for task in state.task_plan
+        if task.status == TaskStatus.COMPLETED and task.id in fresh_ids
+    )
+
+
+def observe_state(
+    state: DesignState, goal: str, target_ref: str | None,
+    *, readiness_check: ReadinessCheck = readiness_for,
+) -> StateSummary:
+    gate = readiness_check(state, "R2")
+    digest = engineering_digest(state)
+    done = fresh_completed_actions(state)
     candidate = state.candidate_designs[-1] if state.candidate_designs else None
     return StateSummary(
         state.state_version, digest, gate.ready,
@@ -168,7 +185,8 @@ class FakePlanner:
 
 def policy_guard(
     decision: PlanDecision, state: DesignState, target_ref: str | None,
-    catalog: dict[str, ActionSpec],
+    catalog: dict[str, ActionSpec], *,
+    readiness_check: ReadinessCheck = readiness_for,
 ) -> GuardDecision:
     spec = catalog.get(decision.action)
     reason = None
@@ -183,10 +201,15 @@ def policy_guard(
     elif any(ref not in state.parameters and not target_exists(state, ref)
              for ref in decision.input_refs):
         reason = "UNKNOWN_INPUT_REF"
-    elif spec.required_gate and not readiness_for(state, spec.required_gate).ready:
+    elif spec.required_gate and not readiness_check(state, spec.required_gate).ready:
         reason = "INPUT_NOT_READY"
     elif spec.required_gate and state.target_scope != "cylindrical_radial_hydrodynamic":
         reason = "UNSUPPORTED_SCOPE"
+    elif (decision.action == "generate_candidate"
+          and "analyze_conditions" not in fresh_completed_actions(state)):
+        # Demo-only predecessor. A future engineering Agent will require a
+        # traceable validated analysis result rather than only a task receipt.
+        reason = "ANALYSIS_NOT_READY"
     elif spec.effect_class not in {"READ_ONLY", "HUMAN_DECISION"}:
         reason = "PERMISSION_DENIED"
     elif (spec.effect_class == "HUMAN_DECISION" or decision.requires_confirmation) and not (

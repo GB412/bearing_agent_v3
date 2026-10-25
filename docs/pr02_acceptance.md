@@ -111,3 +111,22 @@ DLAP 或并行调度。这里只保证本 PR 的任务效果幂等；不声明�
 FakeAgent 的 `AgentResult` 当前只存在于执行栈中；`last_result_ref` 指向提交事件而不是可
 读取的结果内容，且本 PR 没有实际读取该结果的消费者。可读取、受大小限制的结果摘要留给
 PR-02B 评估，不新增结果数据库。
+
+
+## PR-02 后续集成审查补丁（2026-10-25）
+
+- Runtime 调用与 StateManager 一致的 `StageRequirementRegistry` 和
+  `ParameterSchemaRegistry` 进行 R2/动作前置条件检查。独立调用
+  `observe_state`/`policy_guard` 的测试和工具仍可使用默认规则；
+  生产运行以 Runtime 传入的可信检查器为准。
+- `generate_candidate`（目前仅 DEMO_ONLY）在完成当前输入摘要下的
+  `analyze_conditions` 任务前不能执行。未来真实候选生成还需要
+  PR-05/07 提供实际工程分析结果证据，而不是只相信任务状态。
+- `register` 已提交但 `start` 未成功时，复用既有 `expire` 命令，
+  尝试清理 PENDING/RUNNING/BLOCKED 任务；沿用有界 CAS 重试，不新增
+  一套补偿事务或第二数据库。
+- 新增 `tests/orchestration/test_runtime_hardening.py` 检查自定义 R2、
+  过早方案生成以及任务启动故障。相关验证不等于真实 DLAP 或专业设计验收。
+- 审查未删除 output schema 验证、结果 patch 阻断、模型输出解析或
+  版本重查：这些并非重复防御，而是模型提案、派发授权、状态提交
+  三个独立的可信边界。

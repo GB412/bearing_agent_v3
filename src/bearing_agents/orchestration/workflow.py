@@ -9,6 +9,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
+from bearing_agents.core.readiness import readiness_for
 from bearing_agents.core.state_manager import StateManager, StateManagerError, VersionConflictError
 from bearing_agents.domain.agent_protocols import PlanDecision, TaskRecord
 from bearing_agents.domain.enums import TaskStatus
@@ -64,6 +65,13 @@ class Runtime:
         builder.add_conditional_edges("wait_user", self._continue,
                                       {"next": "observe", "end": END})
         self.graph = builder.compile(checkpointer=checkpointer)
+
+    def _readiness(self, domain, stage):
+        # One domain-configured evaluator for both planning and dispatch.
+        return readiness_for(
+            domain, stage, self.manager.stage_registry,
+            parameter_registry=self.manager.parameter_registry,
+        )
 
     def _config(self, design_id):
         state = self.manager.get_design(design_id)
@@ -159,7 +167,10 @@ class Runtime:
 
     def _plan(self, state):
         domain = self.manager.get_design(state["design_id"])
-        summary = observe_state(domain, state["goal"], state["target_ref"])
+        summary = observe_state(
+            domain, state["goal"], state["target_ref"],
+            readiness_check=self._readiness,
+        )
         context = PlannerContext(
             action_descriptions=tuple(
                 (name, spec.effect_class, spec.required_gate, spec.supported)
@@ -214,7 +225,10 @@ class Runtime:
 
     def _guard(self, state):
         domain = self.manager.get_design(state["design_id"])
-        result = policy_guard(self._decision(state), domain, state["target_ref"], self.catalog)
+        result = policy_guard(
+            self._decision(state), domain, state["target_ref"], self.catalog,
+            readiness_check=self._readiness,
+        )
         return {"trace": self._trace(
             state, stage="guard", action=state["action"], guard=result.verdict,
             reason=result.reason_code, domain_version=domain.state_version,
@@ -235,13 +249,15 @@ class Runtime:
             command, context=SYSTEM,
         )
 
-    def _expire_running_task(self, state, reason):
+    def _expire_active_task(self, state, reason):
         """Make an unsafe or unretryable dispatch terminal without changing engineering data."""
         for _ in range(3):
             domain = self.manager.get_design(state["design_id"])
             task = next((item for item in domain.task_plan
                          if item.id == state["current_task_id"]), None)
-            if task is None or task.status != TaskStatus.RUNNING:
+            if task is None or task.status not in {
+                TaskStatus.PENDING, TaskStatus.RUNNING, TaskStatus.BLOCKED,
+            }:
                 return
             command = TaskCommand(
                 operation_id=f"{task.id}:expire:{fingerprint(reason)[:12]}",
@@ -255,7 +271,7 @@ class Runtime:
                 return
             except (VersionConflictError, StateConflictError):
                 continue
-        raise StateManagerError("Could not expire running task after 3 CAS attempts")
+        raise StateManagerError("Could not expire active task after 3 CAS attempts")
 
     def _completion_still_allowed(self, state, domain):
         if engineering_digest(domain) != state["input_digest"]:
@@ -265,7 +281,10 @@ class Runtime:
         if task is None or task.status != TaskStatus.RUNNING:
             return False
         decision = self._decision(state).model_copy(update={"state_version": domain.state_version})
-        return policy_guard(decision, domain, state["target_ref"], self.catalog).verdict == "ALLOW"
+        return policy_guard(
+            decision, domain, state["target_ref"], self.catalog,
+            readiness_check=self._readiness,
+        ).verdict == "ALLOW"
 
     def _prepare(self, state):
         task_id = fingerprint([state["run_id"], state["steps"], state["action"],
@@ -280,6 +299,10 @@ class Runtime:
                                             reason=state["rationale"])
             receipt = self._task_command(local, "start", expected_version=registered.state_version)
         except (VersionConflictError, StateConflictError, StateManagerError) as exc:
+            # Register and start are separate task commands. An unsuccessful
+            # start must not strand a committed PENDING task. This also handles
+            # a register that committed but raised before returning its receipt.
+            self._expire_active_task(local, "TASK_PREPARE_FAILED")
             return {"errors": state["errors"] + 1,
                     "trace": self._trace(state, stage="conflict", reason=str(exc))}
         return {"current_task_id": task_id, "decision_version": receipt.state_version,
@@ -297,11 +320,14 @@ class Runtime:
         waited = any(e.details.get("operation_id") == f"{state['current_task_id']}:wait"
                      for e in domain.event_history)
         # Bookkeeping advanced the CAS version. Check the action AND engineering digest again.
-        guard = policy_guard(self._decision(state), domain, state["target_ref"], self.catalog)
+        guard = policy_guard(
+            self._decision(state), domain, state["target_ref"], self.catalog,
+            readiness_check=self._readiness,
+        )
         if not waited and (
             guard.verdict == "BLOCK" or engineering_digest(domain) != state["input_digest"]
         ):
-            self._expire_running_task(
+            self._expire_active_task(
                 state, f"VERSION_STALE: dispatch guard blocked ({guard.reason_code})",
             )
             return {"termination_reason": "VERSION_STALE",
@@ -329,7 +355,7 @@ class Runtime:
                 self._task_command(state, "fail",
                                    reason=f"FakeAgent rejected: {type(exc).__name__}")
             except (StateManagerError, StateConflictError):
-                self._expire_running_task(
+                self._expire_active_task(
                     state, "VERSION_STALE: agent failure could not be safely recorded",
                 )
             return {"errors": state["errors"] + 1,
@@ -350,7 +376,7 @@ class Runtime:
             except (VersionConflictError, StateConflictError):
                 continue
         if receipt is None:
-            self._expire_running_task(
+            self._expire_active_task(
                 state,
                 "VERSION_STALE: engineering inputs changed or task completion could not retry",
             )
