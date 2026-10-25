@@ -2,10 +2,9 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
-from bearing_agents.requirements.contracts import InteractionReceipt, UserTurn
-
 from bearing_agents.domain.state import DesignState
 from bearing_agents.domain.tasks import TaskReceipt
+from bearing_agents.requirements.contracts import InteractionReceipt, UserTurn
 
 
 class StateConflictError(RuntimeError):
@@ -164,7 +163,9 @@ class SQLiteStateRepository:
         if row is None:
             return None
         if row[0] != design_id or row[1] != intent_hash:
-            raise StateConflictError("Interaction operation ID reused with different intent")
+            raise StateConflictError(
+                        "Interaction operation ID reused with different intent"
+                    )
         return InteractionReceipt.model_validate_json(row[2]).model_copy(
             update={"replayed":True}
         )
