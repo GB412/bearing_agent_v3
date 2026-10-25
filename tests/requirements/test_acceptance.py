@@ -9,7 +9,7 @@ import sys
 
 import pytest
 
-from bearing_agents.core.state_manager import StateManager, StateManagerError, VersionConflictError
+from bearing_agents.core.state_manager import StateManager, StateManagerError
 from bearing_agents.domain.enums import ParameterStatus
 from bearing_agents.infra.state_repository import SQLiteStateRepository, StateConflictError
 from bearing_agents.orchestration.workflow import open_runtime
