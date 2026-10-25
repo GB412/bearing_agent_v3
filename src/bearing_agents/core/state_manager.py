@@ -742,6 +742,8 @@ class StateManager:
             occurred_at=datetime.now(UTC),
             details={
                 "writer_kind": context.kind.value,
+                "interaction_operation_id": interaction[0] if interaction else None,
+                "source_message_id": interaction[2] if interaction else None,
                 "invalidated_objects": invalidated.invalidated_objects,
                 "confirmation_events": [
                     e.model_dump(mode="json") for e in confirmation_events
