@@ -233,6 +233,13 @@ class InteractionService:
                 approved_constraint_ids=frozenset({constraint_id})),
         )
 
+    def reject_constraint(self, design_id: str, constraint_id: str, revision: int):
+        state=self.manager.get_design(design_id)
+        return self.manager.reject_pending_constraint(
+            design_id,state.state_version,constraint_id,revision,
+            context=WriteContext(kind=WriterKind.USER,actor=self.actor),
+        )
+
     def reject_proposal(self, design_id: str, proposal_id: str):
         state=self.manager.get_design(design_id)
         return self.manager.resolve_parameter_proposal(
