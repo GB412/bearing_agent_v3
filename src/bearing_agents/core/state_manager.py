@@ -140,6 +140,7 @@ class StateManager:
     ) -> TaskReceipt:
         """PR-02 task effects only; no arbitrary domain mutation or Agent patch upgrade."""
         command = TaskCommand.model_validate(command.model_dump())
+        context = WriteContext.model_validate(context.model_dump())
         if context.kind == WriterKind.AGENT:
             raise StateManagerError("Task lifecycle requires trusted SYSTEM or USER context")
         if (context.kind == WriterKind.USER) != (command.kind == "resume"):
@@ -186,7 +187,8 @@ class StateManager:
                 "wait": ({TaskStatus.RUNNING}, TaskStatus.BLOCKED),
                 "resume": ({TaskStatus.BLOCKED},
                            TaskStatus.COMPLETED if command.accepted else TaskStatus.FAILED),
-                "expire": ({TaskStatus.BLOCKED, TaskStatus.PENDING, TaskStatus.RUNNING},
+                "expire": ({TaskStatus.BLOCKED, TaskStatus.PENDING, TaskStatus.RUNNING,
+                            TaskStatus.STALE},
                            TaskStatus.STALE),
             }
             sources, target = allowed[command.kind]
@@ -214,6 +216,11 @@ class StateManager:
                 if any(tasks.get(ref) is None or tasks[ref].status != TaskStatus.COMPLETED
                        for ref in task.depends_on_task_ids):
                     raise StateManagerError("Task predecessors are not completed and fresh")
+                fresh_ids = {e.details.get("task_id") for e in current.event_history
+                             if e.details.get("task_command") in {"complete", "resume"}
+                             and e.details.get("input_digest") == engineering_digest(current)}
+                if set(task.depends_on_task_ids) - fresh_ids:
+                    raise StateManagerError("Legacy predecessor freshness cannot be established")
                 known = set(current.parameters) | {
                     "constraints", "operating_cases", "knowledge_rule_set_version",
                 }
