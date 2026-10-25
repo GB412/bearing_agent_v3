@@ -270,3 +270,15 @@ def test_cas_conflict_keeps_message_retryable_without_duplicate_effect(rig,monke
     assert state.parameters["journal_diameter"].revision==1
     assert sum(event.details.get("interaction_operation_id")=="cas-retry"
                for event in state.event_history)==1
+
+
+def test_unknown_scope_is_routed_to_requirements_agent_by_existing_runtime(rig,tmp_path):
+    manager,service,design=rig
+    # This is the actual language-first default, not PR-01's legacy scope.
+    assert manager.get_design(design.design_id).target_scope=="unknown"
+    with open_runtime(manager,tmp_path/"unknown-checkpoint.sqlite",
+                      agents={"requirements_fake":RequirementsAgent(manager)}) as runtime:
+        result=runtime.invoke(design.design_id)
+    assert result["termination_reason"]=="MISSING_INPUT"
+    assert any(q["reason_code"]=="SCOPE_UNKNOWN" for q in result["questions"])
+    assert not manager.get_design(design.design_id).parameters
