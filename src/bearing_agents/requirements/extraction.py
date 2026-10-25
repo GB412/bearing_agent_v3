@@ -1,6 +1,10 @@
 """Minimal deterministic extraction; an LLM may suggest the same untrusted schema."""
 
+import json
+import os
 import re
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from bearing_agents.requirements.contracts import RequirementProposal
 
@@ -83,21 +87,61 @@ def extract(text: str) -> list[RequirementProposal]:
     return proposals
 
 
+class ExtractionBatch(BaseModel):
+    """Strict model-facing envelope; no verified or identity fields."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    proposals: list[RequirementProposal] = Field(default_factory=list, max_length=24)
+
+
 class LLMExtractor:
-    """Optional structured LLM proposal adapter. Never gains write permission."""
+    """Opt-in model extracts untrusted proposals; verification stays deterministic."""
 
     def __init__(self, model):
         self.model = model
 
+    @classmethod
+    def from_environment(cls):
+        if os.getenv("BEARING_LLM_ENABLED", "").strip().lower() not in {
+            "1", "true", "yes", "on",
+        }:
+            raise ValueError("Real extraction requires BEARING_LLM_ENABLED=true")
+        api_key = os.getenv("BEARING_LLM_API_KEY", "").strip()
+        base_url = os.getenv("BEARING_LLM_BASE_URL", "").strip()
+        model_name = os.getenv("BEARING_REQUIREMENTS_MODEL", "").strip() or (
+            os.getenv("BEARING_PLANNER_MODEL", "").strip()
+        )
+        if not (api_key and base_url and model_name):
+            raise ValueError("Configure BEARING_LLM_API_KEY/BASE_URL and a model name")
+        try:
+            from langchain_openai import ChatOpenAI
+        except ImportError as exc:
+            raise RuntimeError("Install project [llm] extra for real extraction") from exc
+        client = ChatOpenAI(
+            api_key=api_key,base_url=base_url,model=model_name,
+            temperature=0,timeout=90,max_retries=0,
+        ).with_structured_output(ExtractionBatch,method="json_mode",include_raw=True)
+        return cls(client)
+
     def extract(self, text: str) -> list[RequirementProposal]:
         response = self.model.invoke(
-            "Extract explicit bearing requirement claims only. Return a JSON array of "
-            "objects with kind, field_id, quote, start, end, value, unit, modality. "
-            "Do not infer missing data or include identity, authority or approvals. "
-            "Text: " + repr(text)
+            "Extract only explicit bearing facts and constraints. Return a JSON object "
+            "with the key proposals containing a list of items. Each item must contain "
+            "kind, field_id, quote, start, end and (if present) value, unit, modality, "
+            "operator. The start/end are Python string character indices in the "
+            "original message. Do not infer missing fields. Never include message_id, "
+            "actor, confirmation or verified source fields. User message: " + repr(text)
         )
-        import json
+        if isinstance(response,dict) and "raw" in response and "parsed" in response:
+            if response.get("parsing_error") is not None:
+                raise ValueError("Real extractor structured parsing failed")
+            response = response["parsed"]
+        if isinstance(response,ExtractionBatch):
+            return response.proposals
         raw = getattr(response, "content", response)
-        if isinstance(raw, str):
+        if isinstance(raw,str):
             raw = json.loads(raw)
-        return [RequirementProposal.model_validate(item) for item in raw]
+        if isinstance(raw,list):
+            raw = {"proposals":raw}
+        return ExtractionBatch.model_validate(raw).proposals
