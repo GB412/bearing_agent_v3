@@ -1,7 +1,8 @@
 """Small orchestration contracts and deterministic substitutes, without another domain state."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Literal
+from typing import Literal
 
 from typing_extensions import TypedDict
 
