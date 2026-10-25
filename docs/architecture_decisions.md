@@ -124,3 +124,51 @@ silently coerced. Backfill a pre-upgrade current snapshot on the first managed w
 - Candidate input dependency maps are currently conservative and legacy-compatible.
   Precise consumed-dependency snapshots should be tackled together with
   PR-02 replanning, not by dropping dependencies without equivalent tracing.
+
+## PR-02: reduced runtime and task-only idempotency (2026-10-25)
+
+The user's explicit implementation adjustments supersede the earlier PR-02 plan.
+`dependencies` remains legacy input fields; only `depends_on_task_ids` is added.
+Typed consumed refs and precision tracking are deferred to PR-07. Old JSON reads
+without writes. Ambiguous old dependencies are blocked at execution; engineering
+changes conservatively stale tasks without a provable input dependency set.
+
+`StateManager.apply_task_command` adds only register/start/complete/fail/wait/
+resume/expire. It revalidates commands and trusted identity, enforces CAS, task
+predecessors, state transitions and a three-active-task limit. SYSTEM manages
+execution; USER only resolves a particular waiting request. Agents retain the
+unchanged PR-01 patch contract. TaskPlanView is a disposable projection.
+
+The existing business database adds one `task_operations` table. Operation intent
+includes command and trusted actor; the external expected CAS version is not part
+of the logical operation. State JSON, event and receipt commit atomically. Replay
+checks receipt before freshness/CAS and rejects intent/actor collisions. This is
+NOT a general transaction platform: parameter/candidate composite writes are not
+part of this guarantee and need explicit tests when introduced in PR-03/05/07.
+SQLite connections now close explicitly; `with connection` alone only committed
+transactions and left Windows demo databases locked until garbage collection.
+
+LangGraph 1.2.17 + checkpoint 4.3.0 + checkpoint-sqlite 3.1.2 + langchain-core
+1.7.0 are pinned. Official synchronous SqliteSaver uses a separate file, stable
+thread binding and `durability="sync"`. No second domain/task database, provider
+model client, vector store or custom persistence runtime is introduced. The saver
+package's sqlite-vec dependency is not used as a knowledge/memory service.
+
+GraphState contains references and bounded trace, not writable engineering facts.
+Planner/result contracts remain unchanged; trusted catalog/guard owns executor,
+schema and permitted effects. FakeAgent receives isolated copies and has no
+repository. All Agent state patches are rejected in this read-only fake runtime.
+Only StateManager task commands write domain state. Task-start bookkeeping is
+followed by a fresh Guard check; completion still uses the observed domain CAS.
+
+Confirmation only completes/rejects a demo task. It does not confirm parameters
+or candidates. Its request is checkpointed and bound to target revision, thread,
+task and a conservative engineering digest excluding task/event bookkeeping.
+Only the external trusted offline gateway supplies USER context. Raw LangGraph
+resume content has no authority. Related changes expire the request; duplicate
+decisions replay the task receipt. Formal candidate commands remain PR-07/08.
+
+Recovery promises at-least-once node execution and idempotent task effects, not
+cross-database exactly-once. Actual saver-write failure and hard process exit
+after task commit are tested across independent processes; the receipt is reused.
+Official SqliteSaver and current serial design are for local prototype workloads.

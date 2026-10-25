@@ -16,6 +16,7 @@ from bearing_agents.domain.proposals import ParameterChangeProposal, ProposalRes
 
 if TYPE_CHECKING:
     from bearing_agents.domain.state import DesignState
+    from bearing_agents.domain.tasks import TaskReceipt
 
 
 class TaskRecord(BaseModel):
@@ -26,6 +27,8 @@ class TaskRecord(BaseModel):
     agent: str
     status: TaskStatus
     dependencies: list[str] = Field(default_factory=list)
+    # Legacy dependencies are input fields only; these are task IDs, never fields.
+    depends_on_task_ids: list[str] = Field(default_factory=list)
     input_version: int = Field(ge=0)
     output_ref: str | None = None
     attempt_count: int = Field(default=0, ge=0)
@@ -115,6 +118,15 @@ class StateRepository(Protocol):
     def get(self, design_id: str) -> "DesignState | None": ...
 
     def save(self, state: "DesignState", expected_version: int) -> None: ...
+
+    def get_task_operation(
+        self, operation_id: str, design_id: str, intent_hash: str,
+    ) -> "TaskReceipt | None": ...
+
+    def commit_task(
+        self, state: "DesignState", expected_version: int,
+        intent_hash: str, receipt: "TaskReceipt",
+    ) -> "TaskReceipt": ...
 
 
 class Agent(Protocol):

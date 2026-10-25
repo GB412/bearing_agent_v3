@@ -29,6 +29,7 @@ from bearing_agents.domain.enums import (
     ParameterStatus,
     PrecheckStatus,
     SimulationStatus,
+    TaskStatus,
 )
 from bearing_agents.domain.events import StateEvent
 from bearing_agents.domain.operating_cases import OperatingCase
@@ -43,6 +44,7 @@ from bearing_agents.domain.proposals import (
     ProposalStatus,
 )
 from bearing_agents.domain.state import DesignState
+from bearing_agents.domain.tasks import TaskCommand, TaskReceipt, engineering_digest, fingerprint
 from bearing_agents.domain.write_context import WriteContext, WriterKind
 
 
@@ -131,6 +133,137 @@ class StateManager:
         if state is None:
             raise KeyError(f"Unknown design_id: {design_id}")
         return state
+
+    def apply_task_command(
+        self, design_id: str, expected_version: int, command: TaskCommand,
+        *, context: WriteContext,
+    ) -> TaskReceipt:
+        """PR-02 task effects only; no arbitrary domain mutation or Agent patch upgrade."""
+        command = TaskCommand.model_validate(command.model_dump())
+        context = WriteContext.model_validate(context.model_dump())
+        if context.kind == WriterKind.AGENT:
+            raise StateManagerError("Task lifecycle requires trusted SYSTEM or USER context")
+        if (context.kind == WriterKind.USER) != (command.kind == "resume"):
+            raise StateManagerError("Only a trusted USER may resume a waiting task")
+        intent = fingerprint({
+            "command": command.model_dump(mode="json"),
+            "writer_kind": context.kind.value, "actor": context.actor,
+        })
+        prior = self.repository.get_task_operation(command.operation_id, design_id, intent)
+        if prior is not None:
+            return prior
+        current = self.get_design(design_id)
+        if current.state_version != expected_version:
+            prior = self.repository.get_task_operation(command.operation_id, design_id, intent)
+            if prior is not None:
+                return prior
+            raise VersionConflictError("Task command has a stale domain version")
+        if command.expected_input_digest is not None and (
+            command.expected_input_digest != engineering_digest(current)
+        ):
+            raise VersionConflictError("Task inputs or confirmation request are stale")
+        updated = current.model_copy(deep=True)
+        tasks = {task.id: task for task in updated.task_plan}
+        if len(tasks) != len(updated.task_plan):
+            raise StateManagerError(
+                "Legacy task IDs are ambiguous; explicit correction is required"
+            )
+        task = tasks.get(command.task_id)
+        if command.kind == "register":
+            proposed = command.task
+            if task is not None or proposed is None or proposed.id != command.task_id:
+                raise StateManagerError("Task registration needs a new matching task ID")
+            if (proposed.status != TaskStatus.PENDING or proposed.attempt_count
+                or proposed.output_ref is not None or proposed.input_version != expected_version):
+                raise StateManagerError("New tasks must be PENDING with current input version")
+            if sum(t.status in {TaskStatus.PENDING, TaskStatus.RUNNING, TaskStatus.BLOCKED}
+                   for t in tasks.values()) >= 3:
+                raise StateManagerError("At most three active near-term tasks are allowed")
+            if (len(set(proposed.depends_on_task_ids)) != len(proposed.depends_on_task_ids)
+                or any(ref not in tasks for ref in proposed.depends_on_task_ids)):
+                raise StateManagerError("Task predecessors must be distinct existing task IDs")
+            # New IDs can only reference existing tasks, so self/cyclic edges cannot be created.
+            tasks[proposed.id] = proposed.model_copy(deep=True)
+        else:
+            if task is None or command.task is not None:
+                raise StateManagerError("Task transition needs an existing task, not a replacement")
+            allowed = {
+                "start": ({TaskStatus.PENDING}, TaskStatus.RUNNING),
+                "complete": ({TaskStatus.RUNNING}, TaskStatus.COMPLETED),
+                "fail": ({TaskStatus.RUNNING}, TaskStatus.FAILED),
+                "wait": ({TaskStatus.RUNNING}, TaskStatus.BLOCKED),
+                "resume": ({TaskStatus.BLOCKED},
+                           TaskStatus.COMPLETED if command.accepted else TaskStatus.FAILED),
+                "expire": ({TaskStatus.BLOCKED, TaskStatus.PENDING, TaskStatus.RUNNING,
+                            TaskStatus.STALE},
+                           TaskStatus.STALE),
+            }
+            sources, target = allowed[command.kind]
+            if task.status not in sources:
+                raise StateManagerError(f"Illegal task transition {task.status} -> {target}")
+            if command.kind == "resume" and (
+                command.accepted is None or command.expected_input_digest is None
+                or command.operation_id != f"{task.output_ref}:resume"
+            ):
+                raise StateManagerError(
+                    "Resume requires a bound request, digest and explicit decision"
+                )
+            if command.kind == "resume":
+                waiting = next((e for e in reversed(current.event_history)
+                                if e.details.get("task_id") == task.id
+                                and e.details.get("task_command") == "wait"), None)
+                if (waiting is None or waiting.details.get("input_digest")
+                    != command.expected_input_digest):
+                    raise StateManagerError("Confirmation does not match the waiting request")
+            if command.kind == "wait" and (
+                not command.output_ref or command.expected_input_digest is None
+            ):
+                raise StateManagerError("Waiting requires a request reference and input digest")
+            if command.kind == "start":
+                if any(tasks.get(ref) is None or tasks[ref].status != TaskStatus.COMPLETED
+                       for ref in task.depends_on_task_ids):
+                    raise StateManagerError("Task predecessors are not completed and fresh")
+                fresh_ids = {e.details.get("task_id") for e in current.event_history
+                             if e.details.get("task_command") in {"complete", "resume"}
+                             and e.details.get("input_digest") == engineering_digest(current)}
+                if set(task.depends_on_task_ids) - fresh_ids:
+                    raise StateManagerError("Legacy predecessor freshness cannot be established")
+                known = set(current.parameters) | {
+                    "constraints", "operating_cases", "knowledge_rule_set_version",
+                }
+                if any((ref not in known and self.parameter_registry.get(ref) is None)
+                       or ref in tasks for ref in task.dependencies):
+                    raise StateManagerError("Ambiguous legacy input dependency; replan task")
+            tasks[task.id] = task.model_copy(update={
+                "status": target,
+                "attempt_count": task.attempt_count + (command.kind == "start"),
+                "input_version": expected_version + 1 if command.kind == "start"
+                else task.input_version,
+                "output_ref": command.output_ref or task.output_ref,
+            })
+        updated.task_plan = list(tasks.values())
+        updated.state_version += 1
+        event = StateEvent(
+            design_id=design_id, from_version=expected_version,
+            to_version=updated.state_version, changed_fields=["task_plan"],
+            source="orchestration", actor=context.actor,
+            details={"operation_id": command.operation_id, "task_id": command.task_id,
+                     "task_command": command.kind, "reason": command.reason,
+                     "writer_kind": context.kind.value,
+                     "accepted": command.accepted,
+                     "input_digest": command.expected_input_digest,
+                     "plan_revision": sum(
+                         e.details.get("task_command") == "register" for e in current.event_history
+                     ) + (command.kind == "register")},
+        )
+        updated.event_history.append(event)
+        receipt = TaskReceipt(
+            operation_id=command.operation_id, design_id=design_id, task_id=command.task_id,
+            state_version=updated.state_version, event_id=event.event_id,
+        )
+        return self.repository.commit_task(
+            self._validate_state(updated), expected_version, intent, receipt,
+        )
 
     def _apply_constraint_changes(
         self, updated: DesignState, constraints: list[ConstraintRecord],

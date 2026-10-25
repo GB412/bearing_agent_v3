@@ -71,7 +71,30 @@ def invalidate_dependents(state: DesignState, changed_fields: set[str]) -> Inval
             state.issues[index] = issue.model_copy(update={"status": IssueStatus.STALE})
             invalidated.append(f"issue:{issue.code}")
     for index, task in enumerate(state.task_plan):
-        if changed_fields & set(task.dependencies):
+        # Unknown/absent legacy inputs cannot prove freshness. Task IDs never
+        # become field dependencies; task bookkeeping is not an engineering change.
+        engineering_changes = changed_fields - {"task_plan", "confirmations"}
+        known = set(state.parameters) | set(DEPENDENCIES) | {
+            "constraints", "operating_cases", "knowledge_rule_set_version",
+        } | {item for values in DEPENDENCIES.values() for item in values}
+        ambiguous = not task.dependencies or any(
+            ref not in known or ref in {t.id for t in state.task_plan}
+            for ref in task.dependencies
+        )
+        if engineering_changes and (
+            ambiguous or (engineering_changes | affected) & set(task.dependencies)
+        ):
             state.task_plan[index] = task.model_copy(update={"status": TaskStatus.STALE})
             invalidated.append(f"task:{task.id}")
+    # Bounded propagation over the existing task list, not a generic DAG runtime.
+    for _ in state.task_plan:
+        stale_ids = {task.id for task in state.task_plan if task.status == TaskStatus.STALE}
+        propagated = False
+        for index, task in enumerate(state.task_plan):
+            if task.status != TaskStatus.STALE and stale_ids & set(task.depends_on_task_ids):
+                state.task_plan[index] = task.model_copy(update={"status": TaskStatus.STALE})
+                invalidated.append(f"task:{task.id}")
+                propagated = True
+        if not propagated:
+            break
     return InvalidationResult(invalidated_objects=sorted(set(invalidated)))
