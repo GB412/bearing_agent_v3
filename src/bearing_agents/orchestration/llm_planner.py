@@ -24,6 +24,7 @@ from bearing_agents.orchestration.contracts import (
 
 PROMPT_VERSION = "pr02b-planner-v1"
 PROPOSAL_SCHEMA_VERSION = "PlannerProposal/v1"
+DEFAULT_BASE_URL = "https://api.openai.com/v1"
 
 
 class PlannerProposal(BaseModel):
@@ -130,23 +131,55 @@ class LLMPlanner:
             raise ValueError("max_retries must be 0 or 1")
         self.catalog = dict(CATALOG if catalog is None else catalog)
         self.max_retries = max_retries
-        self.model = model or self._build_openai_model()
+        self.provider = "injected" if model is not None else "openai"
+        self.model_id = "injected" if model is not None else os.getenv("BEARING_PLANNER_MODEL", "")
+        self.base_url = "unknown" if model is not None else os.getenv("BEARING_LLM_BASE_URL", "")
+        self.model = model if model is not None else self._build_openai_model()
         self.last_metadata: dict[str, Any] = {}
 
+    def bind_catalog(self, catalog: dict[str, ActionSpec]) -> None:
+        """Bind the planner to Runtime's trusted action catalog."""
+        self.catalog = dict(catalog)
+
     @staticmethod
-    def _build_openai_model():
-        if not os.getenv("OPENAI_API_KEY"):
-            raise PlannerError("REAL_MODEL_NOT_CONFIGURED", "OPENAI_API_KEY is not configured")
+    def _enabled() -> bool:
+        return os.getenv("BEARING_LLM_ENABLED", "").strip().casefold() in {
+            "1", "true", "yes", "on",
+        }
+
+    def _build_openai_model(self):
+        if not self._enabled():
+            raise PlannerError("REAL_MODEL_DISABLED", "BEARING_LLM_ENABLED is not true")
+        api_key = os.getenv("BEARING_LLM_API_KEY", "").strip()
+        base_url = os.getenv("BEARING_LLM_BASE_URL", "").strip()
+        model_name = os.getenv("BEARING_PLANNER_MODEL", "").strip()
+        missing = [
+            name for name, value in (
+                ("BEARING_LLM_API_KEY", api_key),
+                ("BEARING_LLM_BASE_URL", base_url),
+                ("BEARING_PLANNER_MODEL", model_name),
+            ) if not value
+        ]
+        if missing:
+            raise PlannerError(
+                "REAL_MODEL_NOT_CONFIGURED", "missing " + ", ".join(missing)
+            )
         try:
             from langchain_openai import ChatOpenAI
         except ImportError as exc:
             raise PlannerError(
                 "LLM_DEPENDENCY_MISSING", "Install the project 'llm' extra"
             ) from exc
-        model_name = os.getenv("BEARING_PLANNER_MODEL", "gpt-4o-mini")
-        return ChatOpenAI(model=model_name, temperature=0).with_structured_output(
-            PlannerProposal, method="json_schema"
-        )
+        try:
+            client = ChatOpenAI(
+                api_key=api_key,
+                base_url=base_url or DEFAULT_BASE_URL,
+                model=model_name,
+                temperature=0,
+            )
+            return client.with_structured_output(PlannerProposal, method="json_schema")
+        except Exception as exc:
+            raise PlannerError("MODEL_CONFIGURATION_INVALID", type(exc).__name__) from exc
 
     def _invoke(self, prompt: str) -> Any:
         if not hasattr(self.model, "invoke"):
@@ -177,6 +210,9 @@ class LLMPlanner:
                 last_error = PlannerError("MODEL_API_ERROR", type(exc).__name__)
         else:
             self.last_metadata = {
+                "model_provider": self.provider,
+                "model_id": self.model_id or "unknown",
+                "base_url": self.base_url or "unknown",
                 "prompt_version": PROMPT_VERSION,
                 "prompt_sha256": prompt_hash(prompt),
                 "proposal_schema_version": PROPOSAL_SCHEMA_VERSION,
@@ -188,6 +224,9 @@ class LLMPlanner:
             raise last_error or PlannerError("MODEL_API_ERROR")
 
         self.last_metadata = {
+            "model_provider": self.provider,
+            "model_id": self.model_id or "unknown",
+            "base_url": self.base_url or "unknown",
             "prompt_version": PROMPT_VERSION,
             "prompt_sha256": prompt_hash(prompt),
             "proposal_schema_version": PROPOSAL_SCHEMA_VERSION,

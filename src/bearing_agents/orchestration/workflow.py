@@ -40,6 +40,8 @@ class Runtime:
         self.manager = manager
         self.planner = planner or FakePlanner()
         self.catalog = dict(CATALOG if catalog is None else catalog)
+        if hasattr(self.planner, "bind_catalog"):
+            self.planner.bind_catalog(self.catalog)
         self.agents = dict(agents) if agents is not None else {
             spec.executor_id: FakeAgent() for spec in self.catalog.values()
             if spec.effect_class == "READ_ONLY"
