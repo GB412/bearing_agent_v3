@@ -2,10 +2,12 @@ from dataclasses import replace
 
 import pytest
 
+from bearing_agents.core.state_manager import StateManagerError
 from bearing_agents.domain.agent_protocols import AgentResult, PlanDecision, TaskRecord
 from bearing_agents.domain.enums import AgentResultStatus
-from bearing_agents.domain.tasks import TaskCommand
+from bearing_agents.domain.tasks import TaskCommand, engineering_digest
 from bearing_agents.domain.write_context import WriteContext, WriterKind
+from bearing_agents.infra.state_repository import StateConflictError
 from bearing_agents.orchestration.contracts import CATALOG, FakeAgent
 
 
@@ -168,6 +170,66 @@ def test_task_only_version_change_during_agent_call_does_not_strand_running_task
     assert concurrent.status.value == "PENDING"
     assert agent.calls == 1
     assert any(row["stage"] == "committed" for row in result["trace"])
+
+
+@pytest.mark.parametrize("expire_conflicts", [0, 2, 3])
+def test_guard_rejection_after_start_does_not_leave_task_running(
+    manager, ready, runtime_factory, monkeypatch, expire_conflicts,
+):
+    original = manager.apply_task_command
+    registered = False
+    expire_attempts = 0
+
+    def register_concurrent_task(design_id, expected_version, command, *, context):
+        nonlocal registered, expire_attempts
+        if command.kind == "expire":
+            expire_attempts += 1
+            if expire_attempts > 3:
+                pytest.fail("Task expiration exceeded three attempts")
+            if expire_attempts <= expire_conflicts:
+                raise StateConflictError("Injected expiration CAS conflict")
+        receipt = original(design_id, expected_version, command, context=context)
+        if command.kind == "start" and not registered:
+            registered = True
+            current = manager.get_design(design_id)
+            other = TaskRecord(
+                id="dispatch-race-task", action="produce_summary", agent="summary_fake",
+                status="PENDING", input_version=current.state_version,
+            )
+            original(design_id, current.state_version, TaskCommand(
+                operation_id="dispatch-race-task:register", task_id=other.id,
+                kind="register", task=other, reason="Concurrent trusted bookkeeping",
+            ), context=WriteContext(kind=WriterKind.SYSTEM, actor="test"))
+        return receipt
+
+    monkeypatch.setattr(manager, "apply_task_command", register_concurrent_task)
+    agent = CountingAgent()
+    runtime = runtime_factory(
+        planner=FixedPlanner("produce_summary"), agents={"summary_fake": agent},
+    )
+    if expire_conflicts == 3:
+        with pytest.raises(StateManagerError, match="after 3 CAS attempts"):
+            runtime.invoke(ready.design_id)
+        assert registered
+        assert expire_attempts == 3
+        assert agent.calls == 0
+        assert runtime.graph.get_state(runtime._config(ready.design_id)).next == ("execute",)
+        monkeypatch.setattr(manager, "apply_task_command", original)
+        result = runtime.recover(ready.design_id)
+    else:
+        result = runtime.invoke(ready.design_id)
+        assert registered
+        assert expire_attempts == expire_conflicts + 1
+
+    saved = manager.get_design(ready.design_id)
+    assert result["termination_reason"] == "VERSION_STALE"
+    assert agent.calls == 0
+    assert next(task for task in saved.task_plan if task.action == "produce_summary"
+                and task.id != "dispatch-race-task").status.value == "STALE"
+    other = next(task for task in saved.task_plan if task.id == "dispatch-race-task")
+    assert other.status.value == "PENDING"
+    assert all(task.status.value != "RUNNING" for task in saved.task_plan)
+    assert engineering_digest(saved) == engineering_digest(ready)
 
 
 def test_guard_rejects_wrong_output_schema(ready, runtime_factory):

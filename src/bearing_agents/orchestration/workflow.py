@@ -191,7 +191,7 @@ class Runtime:
 
     def _expire_running_task(self, state, reason):
         """Make an unsafe or unretryable dispatch terminal without changing engineering data."""
-        while True:
+        for _ in range(3):
             domain = self.manager.get_design(state["design_id"])
             task = next((item for item in domain.task_plan
                          if item.id == state["current_task_id"]), None)
@@ -209,6 +209,7 @@ class Runtime:
                 return
             except (VersionConflictError, StateConflictError):
                 continue
+        raise StateManagerError("Could not expire running task after 3 CAS attempts")
 
     def _completion_still_allowed(self, state, domain):
         if engineering_digest(domain) != state["input_digest"]:
@@ -254,6 +255,9 @@ class Runtime:
         if not waited and (
             guard.verdict == "BLOCK" or engineering_digest(domain) != state["input_digest"]
         ):
+            self._expire_running_task(
+                state, f"VERSION_STALE: dispatch guard blocked ({guard.reason_code})",
+            )
             return {"termination_reason": "VERSION_STALE",
                     "trace": self._trace(state, stage="dispatch_blocked", reason=guard.reason_code)}
         if waited or guard.verdict == "NEEDS_USER":

@@ -6,7 +6,7 @@
 
 ## 结果与命令
 
-本地 Windows / Python 3.14：全量 **131 passed**（PR-01 原 92 项文件未改动），
+本地 Windows / Python 3.14：全量 **134 passed**（PR-01 原 92 项文件未改动），
 Ruff、`git diff --check`、`pip check` 通过。Langchain-core 的 Pydantic v1
 兼容导入在 Python 3.14 发出一条上游 warning；项目使用 Pydantic v2，不隐藏该警告。
 CI 增加 Linux/Python 3.11、Windows/Python 3.14 两组；远端结果以实际 PR checks 为准。
@@ -101,8 +101,11 @@ DLAP 或并行调度。这里只保证本 PR 的任务效果幂等；不声明�
 任务结果提交遇到 CAS 冲突时，运行时最多重试三次；每次都重读权威状态，并要求工程
 输入摘要不变、任务仍为 RUNNING、更新版本下 Guard 仍允许该动作。FakeAgent 不会因提交
 重试而再次执行。输入变化或无法安全完成时，现有任务操作将其转为 STALE 后结束运行。
+派发前 Guard 拒绝同样会将已启动任务转为 STALE。失效操作最多尝试三次 CAS；持续冲突时
+抛出明确错误并保留可恢复的图节点，不会无限循环。
 结束的图执行只有在同一确认意图已有持久操作收据时才允许幂等返回；否则拒绝新增确认。
 回归覆盖见 `test_task_only_version_change_during_agent_call_does_not_strand_running_task`、
+`test_guard_rejection_after_start_does_not_leave_task_running`、
 `test_trusted_resume_cannot_create_confirmation_after_graph_has_ended`。
 
 FakeAgent 的 `AgentResult` 当前只存在于执行栈中；`last_result_ref` 指向提交事件而不是可
