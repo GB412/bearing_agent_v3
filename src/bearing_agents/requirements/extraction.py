@@ -66,6 +66,20 @@ def extract(text: str) -> list[RequirementProposal]:
         proposals.append(RequirementProposal(kind="constraint",field_id="bearing_width",
             quote=match.group(),start=match.start(),end=match.end(),
             value=float(match.group(1)),unit={"毫米":"mm","米":"m"}.get(match.group(2),match.group(2)),operator="LE"))
+    # User-specified materials are constraints, not recommendations.
+    material_patterns = (
+        (r"(?:不能用|禁止使用|不得使用)\\s*([\\u4e00-\\u9fa5]{2,12})", "NOT_IN"),
+        (r"材料(?:只允许|仅允许|必须使用)\\s*([\\u4e00-\\u9fa5]{2,12})", "IN"),
+    )
+    for expression, operator in material_patterns:
+        match = re.search(expression, text)
+        if match:
+            proposals.append(RequirementProposal(
+                kind="constraint", field_id="material",
+                quote=match.group(), start=match.start(), end=match.end(),
+                value=match.group(1), unit="1", operator=operator,
+            ))
+            break
     return proposals
 
 
