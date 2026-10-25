@@ -131,7 +131,7 @@ class LLMPlanner:
             raise ValueError("max_retries must be 0 or 1")
         self.catalog = dict(CATALOG if catalog is None else catalog)
         self.max_retries = max_retries
-        self.provider = "injected" if model is not None else "openai"
+        self.provider = "injected" if model is not None else "openai-compatible"
         self.model_id = "injected" if model is not None else os.getenv("BEARING_PLANNER_MODEL", "")
         self.base_url = "unknown" if model is not None else os.getenv("BEARING_LLM_BASE_URL", "")
         self.model = model if model is not None else self._build_openai_model()
@@ -177,7 +177,7 @@ class LLMPlanner:
                 model=model_name,
                 temperature=0,
             )
-            return client.with_structured_output(PlannerProposal, method="json_schema")
+            return client.with_structured_output(PlannerProposal, method="json_mode")
         except Exception as exc:
             raise PlannerError("MODEL_CONFIGURATION_INVALID", type(exc).__name__) from exc
 
@@ -185,6 +185,17 @@ class LLMPlanner:
         if not hasattr(self.model, "invoke"):
             raise PlannerError("MODEL_INTERFACE_INVALID", "Injected model must provide invoke")
         return self.model.invoke(prompt)
+
+    @staticmethod
+    def _token_usage(response: Any) -> Any:
+        """Read provider usage when the adapter exposes it; otherwise be explicit."""
+        metadata = getattr(response, "response_metadata", None)
+        if isinstance(metadata, dict):
+            usage = metadata.get("token_usage") or metadata.get("usage")
+            if usage is not None:
+                return usage
+        usage = getattr(response, "usage_metadata", None)
+        return usage if usage is not None else "unknown"
 
     def plan(self, summary: StateSummary, *, context: PlannerContext | None = None) -> PlanDecision:
         context = context or PlannerContext(
@@ -233,9 +244,7 @@ class LLMPlanner:
             "catalog_hash": catalog_hash(self.catalog),
             "retry_count": retry_count,
             "latency_ms": round((monotonic() - started) * 1000, 2),
-            "token_usage": getattr(response, "response_metadata", {}).get(
-                "token_usage", "unknown"
-            ) if response is not None else "unknown",
+            "token_usage": self._token_usage(response) if response is not None else "unknown",
         }
         spec = self.catalog.get(proposal.action)
         if spec is None or not spec.supported:

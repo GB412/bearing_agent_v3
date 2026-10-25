@@ -1,4 +1,4 @@
-"""Opt-in PR-02B demo; without OPENAI_API_KEY it reports REAL_LLM_PENDING."""
+"""Opt-in PR-02B demo; disabled configuration reports REAL_LLM_PENDING."""
 
 import os
 import sys
@@ -13,8 +13,8 @@ from bearing_agents.orchestration.workflow import open_runtime
 
 
 def main() -> int:
-    if not os.getenv("OPENAI_API_KEY"):
-        print("REAL_LLM_PENDING: set OPENAI_API_KEY to run the real-model demo")
+    if os.getenv("BEARING_LLM_ENABLED", "").casefold() not in {"1", "true", "yes", "on"}:
+        print("REAL_LLM_PENDING: set BEARING_LLM_ENABLED=true to run the real-model demo")
         return 0
     try:
         planner = LLMPlanner()
