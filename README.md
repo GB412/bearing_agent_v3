@@ -88,3 +88,13 @@ See [the orchestration contract](docs/protocols/orchestration_contract_v1.md) an
 Python 3.14 currently emits an upstream langchain-core warning on its Pydantic v1
 compatibility import; this project uses Pydantic v2. Python 3.11 is also a CI target.
 
+## PR-02B real LLMPlanner (opt-in)
+
+Install the optional adapter with `python -m pip install -e ".[llm]"`, then set
+`OPENAI_API_KEY` and optionally `BEARING_PLANNER_MODEL`. The default runtime remains
+offline and uses `FakePlanner`; the real planner never falls back silently when the
+model is unavailable or returns an invalid proposal. Run
+`python examples/pr02b_llm_planner_demo.py` to inspect the explicit pending/configured
+state. Real experiments must record the model metadata and Guard verdicts described in
+`docs/pr02b_acceptance.md`.
+

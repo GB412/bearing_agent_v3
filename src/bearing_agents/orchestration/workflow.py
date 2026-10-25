@@ -1,6 +1,8 @@
 """Serial, bounded LangGraph execution with idempotent task effects only."""
 
 from contextlib import contextmanager
+from inspect import Parameter
+from inspect import signature as inspect_signature
 from uuid import uuid4
 
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -18,6 +20,7 @@ from bearing_agents.orchestration.contracts import (
     FakeAgent,
     FakePlanner,
     GraphState,
+    PlannerContext,
     observe_state,
     policy_guard,
     target_exists,
@@ -143,15 +146,42 @@ class Runtime:
     def _plan(self, state):
         domain = self.manager.get_design(state["design_id"])
         summary = observe_state(domain, state["goal"], state["target_ref"])
+        context = PlannerContext(
+            action_descriptions=tuple(
+                (name, spec.effect_class, spec.required_gate, spec.supported)
+                for name, spec in sorted(self.catalog.items())
+            ),
+            recent_failures=tuple(
+                str(row.get("reason") or row.get("error"))
+                for row in state.get("trace", [])
+                if row.get("stage") in {
+                    "planner_error", "agent_error", "conflict", "dispatch_blocked",
+                } or row.get("guard") == "BLOCK"
+            )[-3:],
+            remaining_steps=max(0, self.max_steps - state["steps"]),
+            remaining_errors=max(0, self.max_errors - state["errors"]),
+        )
         try:
-            proposed = self.planner.plan(summary)
+            plan_method = self.planner.plan
+            parameters = inspect_signature(plan_method).parameters.values()
+            accepts_context = any(
+                parameter.kind == Parameter.VAR_KEYWORD or parameter.name == "context"
+                for parameter in parameters
+            )
+            proposed = (
+                plan_method(summary, context=context)
+                if accepts_context else plan_method(summary)
+            )
             decision = PlanDecision.model_validate(
                 proposed.model_dump() if isinstance(proposed, PlanDecision) else proposed,
             )
         except Exception as exc:
             return {"errors": state["errors"] + 1, "steps": state["steps"] + 1,
                     "termination_reason": "TOOL_ERROR",
-                    "trace": self._trace(state, stage="planner_error", error=type(exc).__name__)}
+                    "trace": self._trace(
+                        state, stage="planner_error",
+                        error=getattr(exc, "reason_code", type(exc).__name__),
+                    )}
         signature = fingerprint([decision.action, summary.input_digest])
         repeats = state["same_action_count"] + 1 if signature == state["last_signature"] else 1
         return {

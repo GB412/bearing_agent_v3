@@ -80,6 +80,16 @@ class StateSummary:
     goal: str
 
 
+@dataclass(frozen=True)
+class PlannerContext:
+    """Small, trusted planning context assembled outside the model."""
+
+    action_descriptions: tuple[tuple[str, str, str | None, bool], ...] = ()
+    recent_failures: tuple[str, ...] = ()
+    remaining_steps: int = 0
+    remaining_errors: int = 0
+
+
 def target_exists(state: DesignState, reference: str | None) -> bool:
     if not reference:
         return False
