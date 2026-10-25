@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from bearing_agents.core.state_manager import StateManager
 from bearing_agents.infra.state_repository import SQLiteStateRepository
+from bearing_agents.requirements.extraction import LLMExtractor
 from bearing_agents.requirements.interaction import InteractionService
 
 
@@ -30,14 +31,17 @@ def main():
     parser.add_argument("--db", type=Path, default=Path("pr03_requirements.sqlite"))
     parser.add_argument("--actor", default="local-designer")
     parser.add_argument("--design-id", default=None)
+    parser.add_argument("--llm", action="store_true", help="Use explicit opt-in LLM extraction")
     args = parser.parse_args()
     manager = StateManager(SQLiteStateRepository(args.db))
-    service = InteractionService(manager, actor=args.actor)
+    extractor = LLMExtractor.from_environment().extract if args.llm else None
+    service = InteractionService(manager, actor=args.actor, extractor=extractor)
     design = (manager.get_design(args.design_id) if args.design_id
               else service.create_design("Interactive bearing design requirements"))
     print(f"设计 ID: {design.design_id}（重启后可用 --design-id 继续）")
     print("请输入轴承条件；:show 查看，:correct 字段 版本 新描述，"
-          ":confirm 字段 版本，:approve 约束ID 版本，:quit 结束。")
+          ":confirm 字段 版本，:approve 约束ID 版本，"
+          ":reject 约束ID 版本，:quit 结束。")
     show(service.show_state(design.design_id))
     while True:
         try:
@@ -60,6 +64,10 @@ def main():
             elif line.startswith(":confirm "):
                 _, key, revision = line.split(" ", 2)
                 service.confirm_parameter(design.design_id, key, int(revision))
+                view = service.show_state(design.design_id)
+            elif line.startswith(":reject "):
+                _, key, revision = line.split(" ", 2)
+                service.reject_constraint(design.design_id, key, int(revision))
                 view = service.show_state(design.design_id)
             elif line.startswith(":approve "):
                 _, key, revision = line.split(" ", 2)
