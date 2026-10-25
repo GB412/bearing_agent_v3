@@ -1,15 +1,14 @@
 """PR-03 integration: verified messages, domain state, questions, idempotency."""
 
 import pytest
+from pydantic import ValidationError
 
-from bearing_agents.core.state_manager import StateManager, StateManagerError, VersionConflictError
+from bearing_agents.core.state_manager import StateManager, VersionConflictError
 from bearing_agents.domain.enums import ParameterStatus
 from bearing_agents.infra.state_repository import SQLiteStateRepository, StateConflictError
 from bearing_agents.requirements.contracts import RequirementProposal
 from bearing_agents.requirements.evidence import verify
-from bearing_agents.requirements.extraction import extract
 from bearing_agents.requirements.interaction import InteractionService
-from bearing_agents.requirements.questions import build_view
 
 
 @pytest.fixture
@@ -91,7 +90,7 @@ def test_forged_value_and_authority_are_rejected(env):
         start=0,end=len(text),value=200,unit="mm",role="FIXED_INPUT",
     )
     assert verify(text,fake,manager.parameter_registry).decision=="REJECT"
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         RequirementProposal.model_validate({**fake.model_dump(),"confirmed_by":"designer"})
     malicious_service=InteractionService(
         manager,actor="local-designer",extractor=lambda _:[fake],
