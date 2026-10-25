@@ -20,6 +20,8 @@ def build_view(manager: StateManager, design_id: str, unresolved=()) -> Requirem
         ask("UNSUPPORTED_SCOPE","这类轴承超出当前版本范围，请改为圆柱径向动压滑动轴承或另行处理。")
     for reason in unresolved:
         ask("CLARIFY_INPUT",f"这条信息尚不明确：{reason}。请提供准确数值、单位或明确说明。")
+    if gate.conflicts:
+        ask("INPUT_CONFLICT", "现有设计条件存在冲突，请核对：" + "; ".join(gate.conflicts[:2]))
     if state.target_scope!="unsupported":
         missing={p.parameter_id for p in gate.missing}
         for key,message in (
