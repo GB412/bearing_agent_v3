@@ -103,10 +103,10 @@ class InteractionService:
             elif p.kind=="steady_state":
                 steady=(p.value=="true")
             elif p.kind=="constraint":
-                # Keep USER-reported constraints pending until explicit approval.
+                # Keep user-declared boundaries inert until explicit approval.
                 constraints.append({
-                    "id":f"msg:{message.message_id}:width-limit",
-                    "parameter":"bearing_width","operator":ConstraintOperator.LE,
+                    "id":f"msg:{message.message_id}:constraint:{p.field_id}",
+                    "parameter":p.field_id,"operator":ConstraintOperator(p.operator),
                     "target":v.normalized_value,"unit":v.normalized_unit,
                     "severity":ConstraintSeverity.HARD,"origin":"user",
                     "approved":False,
