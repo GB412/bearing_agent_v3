@@ -400,7 +400,7 @@ class Runtime:
     def _completed(self, state, domain, receipt, *, questions=None):
         reason = {"clarify_requirement": "MISSING_INPUT", "produce_summary": "GOAL_REACHED",
                   "simulation_unavailable": "UNSUPPORTED_ACTION"}.get(state["action"])
-        if domain.target_scope == "unsupported":
+        if domain.target_scope not in {"cylindrical_radial_hydrodynamic", "unknown"}:
             reason = "UNSUPPORTED_ACTION"
         return {"last_result_ref": receipt.event_id, "termination_reason": reason,
                 "questions": questions if questions is not None else state.get("questions", []),
