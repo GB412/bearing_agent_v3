@@ -6,6 +6,7 @@ Synthetic conversations are not an engineering standard or a real-LLM benchmark.
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -222,3 +223,22 @@ def test_failure_before_domain_commit_retains_retryable_message(rig,monkeypatch)
     committed,_=service.submit_turn(design.design_id,"载荷12kN","fail-before")
     assert not committed.replayed
     assert manager.get_design(design.design_id).parameters["load"].value==12000
+
+
+def test_offline_examples_execute_as_real_processes(tmp_path):
+    root = Path(__file__).resolve().parents[2]
+    demo = subprocess.run(
+        [sys.executable, str(root / "examples" / "pr03_multiturn_demo.py")],
+        cwd=root, text=True, capture_output=True, check=True,
+    )
+    records = json.loads(demo.stdout)
+    assert records[-1]["replayed"] and records[-1]["input_ready"]
+    cli = subprocess.run(
+        [
+            sys.executable, str(root / "examples" / "pr03_requirements_cli.py"),
+            "--db", str(tmp_path / "cli.sqlite"),
+        ],
+        input="圆柱径向动压滑动轴承，轴径100mm，转速1500rpm\n:quit\n",
+        cwd=root, text=True, capture_output=True, check=True,
+    )
+    assert "请提供径向载荷" in cli.stdout
