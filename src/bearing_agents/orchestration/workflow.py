@@ -189,6 +189,37 @@ class Runtime:
             command, context=SYSTEM,
         )
 
+    def _expire_running_task(self, state, reason):
+        """Make an unsafe or unretryable dispatch terminal without changing engineering data."""
+        while True:
+            domain = self.manager.get_design(state["design_id"])
+            task = next((item for item in domain.task_plan
+                         if item.id == state["current_task_id"]), None)
+            if task is None or task.status != TaskStatus.RUNNING:
+                return
+            command = TaskCommand(
+                operation_id=f"{task.id}:expire:{fingerprint(reason)[:12]}",
+                task_id=task.id, kind="expire",
+                reason=reason,
+            )
+            try:
+                self.manager.apply_task_command(
+                    state["design_id"], domain.state_version, command, context=SYSTEM,
+                )
+                return
+            except (VersionConflictError, StateConflictError):
+                continue
+
+    def _completion_still_allowed(self, state, domain):
+        if engineering_digest(domain) != state["input_digest"]:
+            return False
+        task = next((item for item in domain.task_plan
+                     if item.id == state["current_task_id"]), None)
+        if task is None or task.status != TaskStatus.RUNNING:
+            return False
+        decision = self._decision(state).model_copy(update={"state_version": domain.state_version})
+        return policy_guard(decision, domain, state["target_ref"], self.catalog).verdict == "ALLOW"
+
     def _prepare(self, state):
         task_id = fingerprint([state["run_id"], state["steps"], state["action"],
                                state["input_digest"]])
@@ -242,19 +273,40 @@ class Runtime:
             result = self.agents[state["executor"]].run(domain.model_copy(deep=True),
                                                         task.model_copy(deep=True))
             validate_result(result, task.id)
-            receipt = self._task_command(state, "complete", output_ref=f"demo:{task.id}")
-        except (VersionConflictError, StateConflictError):
-            return {"termination_reason": "VERSION_STALE"}
         except Exception as exc:
             # No engineering patch was committed. Record failure only if inputs are still current.
             try:
                 self._task_command(state, "fail",
                                    reason=f"FakeAgent rejected: {type(exc).__name__}")
             except (StateManagerError, StateConflictError):
-                pass
+                self._expire_running_task(
+                    state, "VERSION_STALE: agent failure could not be safely recorded",
+                )
             return {"errors": state["errors"] + 1,
                     "trace": self._trace(state, stage="agent_error", reason=str(exc),
                                          demo_only=True)}
+
+        receipt = None
+        for _ in range(3):
+            current = self.manager.get_design(state["design_id"])
+            if not self._completion_still_allowed(state, current):
+                break
+            try:
+                receipt = self._task_command(
+                    state, "complete", output_ref=f"demo:{task.id}",
+                    expected_version=current.state_version,
+                )
+                break
+            except (VersionConflictError, StateConflictError):
+                continue
+        if receipt is None:
+            self._expire_running_task(
+                state,
+                "VERSION_STALE: engineering inputs changed or task completion could not retry",
+            )
+            return {"termination_reason": "VERSION_STALE",
+                    "trace": self._trace(state, stage="task_blocked", task_id=task.id,
+                                         reason="VERSION_STALE")}
         return self._completed(state, domain, receipt)
 
     def _completed(self, state, domain, receipt):
@@ -304,10 +356,26 @@ class Runtime:
             reason="Explicit offline user decision", accepted=accepted,
             expected_input_digest=request["input_digest"],
         )
+        intent = fingerprint({
+            "command": command.model_dump(mode="json"),
+            "writer_kind": context.kind.value, "actor": context.actor,
+        })
+        prior = self.manager.repository.get_task_operation(
+            command.operation_id, design_id, intent,
+        )
+        pending_interrupt = bool(snapshot.next) and any(
+            getattr(interrupt_record, "value", None) == request
+            for task in snapshot.tasks for interrupt_record in task.interrupts
+        )
+        if not pending_interrupt:
+            if prior is None:
+                raise PermissionError("Confirmation request has no pending interruption")
+            reason = "GOAL_REACHED" if accepted else "USER_REJECTED"
+            return dict(snapshot.values, duplicate=True, termination_reason=reason)
         # StateManager looks up receipts BEFORE CAS/freshness. Duplicate processed requests
         # still resolve to the old result even if newer domain data exists.
         try:
-            receipt = self.manager.apply_task_command(
+            self.manager.apply_task_command(
                 design_id, domain.state_version, command, context=context,
             )
         except (VersionConflictError, StateManagerError):
@@ -318,12 +386,6 @@ class Runtime:
                 operation_id=f"{request_id}:expire", task_id=request["task_id"], kind="expire",
                 reason="ConfirmationExpired: target or engineering dependencies changed",
             ), context=SYSTEM)
-            receipt = None
-        if not snapshot.next:
-            reason = (("GOAL_REACHED" if accepted else "USER_REJECTED")
-                      if receipt else "VERSION_STALE")
-            return dict(snapshot.values, duplicate=bool(receipt and receipt.replayed),
-                        termination_reason=reason)
         return self._output(self.graph.invoke(Command(resume={"request_id": request_id}), config,
                                               durability="sync"))
 

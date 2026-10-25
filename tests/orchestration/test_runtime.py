@@ -132,13 +132,18 @@ def test_f07_domain_change_during_agent_call_cannot_be_overwritten(manager, read
     saved = manager.get_design(ready.design_id)
     assert saved.parameters["load"].value == 13000
     assert not any(e.details.get("task_command") == "complete" for e in saved.event_history)
+    assert all(task.status.value != "RUNNING" for task in saved.task_plan)
 
 
 def test_task_only_version_change_during_agent_call_does_not_strand_running_task(
     manager, ready, runtime_factory,
 ):
     class ConcurrentTaskRegistration(FakeAgent):
+        def __init__(self):
+            self.calls = 0
+
         def run(self, state, task):
+            self.calls += 1
             result = super().run(state, task)
             current = manager.get_design(state.design_id)
             other = TaskRecord(
@@ -151,16 +156,17 @@ def test_task_only_version_change_during_agent_call_does_not_strand_running_task
             ), context=WriteContext(kind=WriterKind.SYSTEM, actor="test"))
             return result
 
-    result = runtime_factory(
-        planner=FixedPlanner("produce_summary"),
-        agents={"summary_fake": ConcurrentTaskRegistration()},
-    ).invoke(ready.design_id)
+    agent = ConcurrentTaskRegistration()
+    result = runtime_factory(planner=FixedPlanner("produce_summary"),
+                             agents={"summary_fake": agent}).invoke(ready.design_id)
 
     saved = manager.get_design(ready.design_id)
     completed = [task for task in saved.task_plan if task.action == "produce_summary"
                  and task.id != "concurrent-task"]
     assert completed and completed[0].status.value == "COMPLETED"
-    assert next(task for task in saved.task_plan if task.id == "concurrent-task").status.value == "PENDING"
+    concurrent = next(task for task in saved.task_plan if task.id == "concurrent-task")
+    assert concurrent.status.value == "PENDING"
+    assert agent.calls == 1
     assert any(row["stage"] == "committed" for row in result["trace"])
 
 

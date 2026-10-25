@@ -6,7 +6,7 @@
 
 ## 结果与命令
 
-本地 Windows / Python 3.14：全量 **129 passed**（PR-01 原 92 项文件未改动），
+本地 Windows / Python 3.14：全量 **131 passed**（PR-01 原 92 项文件未改动），
 Ruff、`git diff --check`、`pip check` 通过。Langchain-core 的 Pydantic v1
 兼容导入在 Python 3.14 发出一条上游 warning；项目使用 Pydantic v2，不隐藏该警告。
 CI 增加 Linux/Python 3.11、Windows/Python 3.14 两组；远端结果以实际 PR checks 为准。
@@ -95,3 +95,16 @@ DLAP 或并行调度。这里只保证本 PR 的任务效果幂等；不声明�
 软件自测：PASS，正式审阅待定。领域验收：NOT_APPLICABLE。
 回滚须保存旧业务库备份；新版本可读旧 JSON，旧版本未必认识新增任务字段。
 用户已有未跟踪 `AGENTS.md` 仅作为本地约束读取，不纳入本 PR。
+
+## 审阅边界修复
+
+任务结果提交遇到 CAS 冲突时，运行时最多重试三次；每次都重读权威状态，并要求工程
+输入摘要不变、任务仍为 RUNNING、更新版本下 Guard 仍允许该动作。FakeAgent 不会因提交
+重试而再次执行。输入变化或无法安全完成时，现有任务操作将其转为 STALE 后结束运行。
+结束的图执行只有在同一确认意图已有持久操作收据时才允许幂等返回；否则拒绝新增确认。
+回归覆盖见 `test_task_only_version_change_during_agent_call_does_not_strand_running_task`、
+`test_trusted_resume_cannot_create_confirmation_after_graph_has_ended`。
+
+FakeAgent 的 `AgentResult` 当前只存在于执行栈中；`last_result_ref` 指向提交事件而不是可
+读取的结果内容，且本 PR 没有实际读取该结果的消费者。可读取、受大小限制的结果摘要留给
+PR-02B 评估，不新增结果数据库。
