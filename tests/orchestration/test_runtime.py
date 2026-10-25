@@ -2,8 +2,9 @@ from dataclasses import replace
 
 import pytest
 
-from bearing_agents.domain.agent_protocols import AgentResult, PlanDecision
+from bearing_agents.domain.agent_protocols import AgentResult, PlanDecision, TaskRecord
 from bearing_agents.domain.enums import AgentResultStatus
+from bearing_agents.domain.tasks import TaskCommand
 from bearing_agents.domain.write_context import WriteContext, WriterKind
 from bearing_agents.orchestration.contracts import CATALOG, FakeAgent
 
@@ -131,6 +132,36 @@ def test_f07_domain_change_during_agent_call_cannot_be_overwritten(manager, read
     saved = manager.get_design(ready.design_id)
     assert saved.parameters["load"].value == 13000
     assert not any(e.details.get("task_command") == "complete" for e in saved.event_history)
+
+
+def test_task_only_version_change_during_agent_call_does_not_strand_running_task(
+    manager, ready, runtime_factory,
+):
+    class ConcurrentTaskRegistration(FakeAgent):
+        def run(self, state, task):
+            result = super().run(state, task)
+            current = manager.get_design(state.design_id)
+            other = TaskRecord(
+                id="concurrent-task", action="produce_summary", agent="summary_fake",
+                status="PENDING", input_version=current.state_version,
+            )
+            manager.apply_task_command(state.design_id, current.state_version, TaskCommand(
+                operation_id="concurrent-task:register", task_id=other.id, kind="register",
+                task=other, reason="Concurrent trusted bookkeeping",
+            ), context=WriteContext(kind=WriterKind.SYSTEM, actor="test"))
+            return result
+
+    result = runtime_factory(
+        planner=FixedPlanner("produce_summary"),
+        agents={"summary_fake": ConcurrentTaskRegistration()},
+    ).invoke(ready.design_id)
+
+    saved = manager.get_design(ready.design_id)
+    completed = [task for task in saved.task_plan if task.action == "produce_summary"
+                 and task.id != "concurrent-task"]
+    assert completed and completed[0].status.value == "COMPLETED"
+    assert next(task for task in saved.task_plan if task.id == "concurrent-task").status.value == "PENDING"
+    assert any(row["stage"] == "committed" for row in result["trace"])
 
 
 def test_guard_rejects_wrong_output_schema(ready, runtime_factory):

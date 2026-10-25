@@ -86,6 +86,22 @@ def test_untrusted_resume_cannot_approve_a_task(manager, ready, runtime_factory)
     assert manager.get_design(ready.design_id) == before
 
 
+def test_trusted_resume_cannot_create_confirmation_after_graph_has_ended(
+    manager, ready, runtime_factory,
+):
+    runtime = runtime_factory()
+    request = pause(runtime, ready)
+    before = manager.get_design(ready.design_id)
+    result = runtime.graph.invoke(Command(resume={"actor": "user", "accepted": True}),
+                                  runtime._config(ready.design_id), durability="sync")
+    assert result["termination_reason"] == "PERMISSION_DENIED"
+    assert manager.get_design(ready.design_id) == before
+
+    with pytest.raises(PermissionError, match="no pending interruption"):
+        runtime.resume(ready.design_id, request["request_id"], accepted=True, context=USER)
+    assert manager.get_design(ready.design_id) == before
+
+
 def test_unrelated_design_cannot_reuse_checkpoint_thread(manager, runtime_factory):
     first = manager.create_design(thread_id="shared-test-thread")
     second = manager.create_design(thread_id="shared-test-thread")
