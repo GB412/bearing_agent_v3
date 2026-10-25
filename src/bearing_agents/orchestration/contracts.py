@@ -80,6 +80,7 @@ class StateSummary:
     candidate_ref: str | None
     target_ref: str | None
     goal: str
+    target_scope: str = "cylindrical_radial_hydrodynamic"
 
 
 @dataclass(frozen=True)
@@ -141,7 +142,7 @@ def observe_state(
         tuple(p.parameter_id for p in gate.missing),
         state.target_scope == "cylindrical_radial_hydrodynamic", done,
         f"candidate:{candidate.candidate_id}@{candidate.version}" if candidate else None,
-        target_ref, goal,
+        target_ref, goal, state.target_scope,
     )
 
 
@@ -160,6 +161,8 @@ class FakePlanner:
     def plan(self, summary: StateSummary) -> PlanDecision:
         if summary.goal == "simulation":
             action = "simulation_unavailable"
+        elif summary.target_scope == "unknown":
+            action = "clarify_requirement"
         elif not summary.supported_scope:
             action = "produce_summary"
         elif (summary.goal == "confirmation" and summary.target_ref
