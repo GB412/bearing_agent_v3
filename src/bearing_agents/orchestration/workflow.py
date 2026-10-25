@@ -125,6 +125,18 @@ class Runtime:
     def _trace(state, **entry):
         return [*state.get("trace", []), entry]
 
+    def _planner_audit(self):
+        """Only persist bounded, non-secret planner telemetry alongside a plan step."""
+        metadata = getattr(self.planner, "last_metadata", None)
+        if not isinstance(metadata, dict):
+            return {}
+        allowed = (
+            "model_provider", "model_id", "prompt_version", "prompt_sha256",
+            "proposal_schema_version", "catalog_hash", "retry_count",
+            "latency_ms", "token_usage", "reason_code",
+        )
+        return {"planner_metadata": {key: metadata[key] for key in allowed if key in metadata}}
+
     @staticmethod
     def _decision(state):
         return PlanDecision(
@@ -183,6 +195,7 @@ class Runtime:
                     "trace": self._trace(
                         state, stage="planner_error",
                         error=getattr(exc, "reason_code", type(exc).__name__),
+                        **self._planner_audit(),
                     )}
         signature = fingerprint([decision.action, summary.input_digest])
         repeats = state["same_action_count"] + 1 if signature == state["last_signature"] else 1
@@ -195,7 +208,8 @@ class Runtime:
             "last_signature": signature, "same_action_count": repeats,
             "termination_reason": "NO_PROGRESS" if repeats >= self.max_same_action else None,
             "trace": self._trace(state, stage="plan", action=decision.action,
-                                 domain_version=decision.state_version, reason=decision.rationale),
+                                 domain_version=decision.state_version, reason=decision.rationale,
+                                 **self._planner_audit()),
         }
 
     def _guard(self, state):
