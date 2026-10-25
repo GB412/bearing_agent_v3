@@ -43,10 +43,12 @@ class Runtime:
         self.catalog = dict(CATALOG if catalog is None else catalog)
         if hasattr(self.planner, "bind_catalog"):
             self.planner.bind_catalog(self.catalog)
-        self.agents = dict(agents) if agents is not None else {
+        self.agents = {
             spec.executor_id: FakeAgent() for spec in self.catalog.values()
             if spec.effect_class == "READ_ONLY"
         }
+        if agents:
+            self.agents.update(agents)
         self.max_steps, self.max_same_action, self.max_errors = (
             max_steps, max_same_action, max_errors,
         )
@@ -90,7 +92,7 @@ class Runtime:
             "run_id": str(uuid4()), "goal": goal, "target_ref": target_ref,
             "steps": 0, "errors": 0, "same_action_count": 0, "last_signature": "",
             "termination_reason": None, "confirmation": None, "trace": [],
-            "current_task_id": "", "last_result_ref": "",
+            "current_task_id": "", "last_result_ref": "", "questions": [],
         }, config, durability="sync"))
 
     @staticmethod
@@ -349,6 +351,16 @@ class Runtime:
             result = self.agents[state["executor"]].run(domain.model_copy(deep=True),
                                                         task.model_copy(deep=True))
             validate_result(result, task.id)
+            public_questions = (
+                [
+                    {"question_id": str(item["question_id"])[:180],
+                     "reason_code": str(item["reason_code"])[:80],
+                     "question": str(item["question"])[:300]}
+                    for item in result.issues
+                    if isinstance(item, dict)
+                    and all(field in item for field in ("question_id", "reason_code", "question"))
+                ][:3] if state["action"] == "clarify_requirement" else []
+            )
         except Exception as exc:
             # No engineering patch was committed. Record failure only if inputs are still current.
             try:
@@ -383,14 +395,15 @@ class Runtime:
             return {"termination_reason": "VERSION_STALE",
                     "trace": self._trace(state, stage="task_blocked", task_id=task.id,
                                          reason="VERSION_STALE")}
-        return self._completed(state, domain, receipt)
+        return self._completed(state, domain, receipt, questions=public_questions)
 
-    def _completed(self, state, domain, receipt):
+    def _completed(self, state, domain, receipt, *, questions=None):
         reason = {"clarify_requirement": "MISSING_INPUT", "produce_summary": "GOAL_REACHED",
                   "simulation_unavailable": "UNSUPPORTED_ACTION"}.get(state["action"])
-        if domain.target_scope != "cylindrical_radial_hydrodynamic":
+        if domain.target_scope not in {"cylindrical_radial_hydrodynamic", "unknown"}:
             reason = "UNSUPPORTED_ACTION"
         return {"last_result_ref": receipt.event_id, "termination_reason": reason,
+                "questions": questions if questions is not None else state.get("questions", []),
                 "trace": self._trace(state, stage="committed", action=state["action"],
                                      task_id=state["current_task_id"],
                                      operation_id=receipt.operation_id,

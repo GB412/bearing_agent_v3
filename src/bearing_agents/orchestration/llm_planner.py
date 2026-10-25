@@ -83,6 +83,7 @@ def build_prompt(summary: StateSummary, context: PlannerContext) -> str:
             "input_ready": summary.input_ready,
             "missing_inputs": list(summary.missing_inputs),
             "supported_scope": summary.supported_scope,
+            "target_scope": summary.target_scope,
             "completed_actions": sorted(summary.completed_actions),
             "candidate_ref": summary.candidate_ref,
             "target_ref": summary.target_ref,

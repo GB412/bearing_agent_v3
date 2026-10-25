@@ -58,6 +58,7 @@ class StatePatch(BaseModel):
     confirmation_events: list["ConfirmationEvent"] = Field(default_factory=list)
     role_changes: list["RoleChange"] = Field(default_factory=list)
     rule_set_change: "RuleSetChange | None" = None
+    scope_change: str | None = None
     source: str
     actor: str | None = None
 

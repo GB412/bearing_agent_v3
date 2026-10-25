@@ -1,7 +1,8 @@
 # Bearing Agents
 
-PR-01 domain foundation and PR-02 controlled offline LangGraph runtime for a cylindrical
-radial hydrodynamic journal bearing design assistant. FakePlanner/FakeAgent demonstrate
+PR-01 domain foundation, PR-02 controlled LangGraph runtime and PR-03 trusted
+multi-turn requirements gathering for a cylindrical radial hydrodynamic journal
+bearing design assistant. FakePlanner/FakeAgent demonstrate
 safe workflow execution. Real LLM planning is opt-in; the default execution stays
 fully offline. The project does not load engineering limits, recommend bearing
 geometry/materials, perform formal prechecks, or connect DLAP.
@@ -56,6 +57,51 @@ The same example can be exercised offline with `python -m pytest -q tests/test_r
 All engineering values must carry explicit units and provenance. An empty design contains no
 invented geometry, load, speed, or operating case. The SQLite file is the local authoritative
 domain-state repository; it is not a conversational memory implementation.
+
+
+## PR-03 trusted requirements interaction
+
+PR-03 adds local multi-turn requirement capture (not a production login system).
+New language-first designs begin with `target_scope="unknown"`; they cannot
+silently assume the PR-01 default V1 design scope. Parameter values from users
+are extracted as *untrusted proposals*, verified against the immutable original
+message and unit registry, then committed through StateManager. Missing inputs
+drive bounded, deterministic questions.
+
+```powershell
+python examples/pr03_multiturn_demo.py
+python examples/pr03_requirements_cli.py --db pr03_requirements.sqlite
+python -m pytest -q tests/requirements tests/orchestration
+```
+
+The CLI prints the design ID. Reopen its database and pass
+`--design-id <id>` to continue after a restart. Commands include
+`:show`, `:correct journal_diameter 1 轴径120mm`,
+`:confirm journal_diameter 2`, `:approve <constraint-id> 1`,
+`:reject <constraint-id> 1`, and `:quit`. Explicit revision numbers
+protect against stale confirmations and corrections.
+
+Default requirement extraction is deterministic and offline. For explicitly
+opt-in real-model extraction, install `.[llm]`, configure the existing
+`BEARING_LLM_ENABLED`, `BEARING_LLM_API_KEY` and
+`BEARING_LLM_BASE_URL` variables plus `BEARING_REQUIREMENTS_MODEL`
+(or `BEARING_PLANNER_MODEL`), and add `--llm` to the CLI command.
+Provider compatibility and extraction accuracy are **not** established by
+stub/offline tests. LLM output cannot grant identity, approval, trusted
+provenance or engineering readiness.
+
+`InteractionService.submit_turn` stores the immutable message first.
+After deterministic evidence verification, StateManager validates the patch.
+The engineering state, StateEvent and interaction receipt are stored in one
+business SQLite transaction with operation-ID deduplication. Retrying an
+already committed user turn does not duplicate engineering effects.
+Ordinary chat turns never call LangGraph's confirmation `resume()`.
+
+`Runtime` can accept `RequirementsAgent` in the existing
+`requirements_fake` executor slot; the runtime exposes bounded
+`questions` as visible output when `clarify_requirement` executes.
+No new supervisor or engineering state machine was created. See
+`docs/pr03_acceptance.md` for R01–R20, recovery tests and limitations.
 
 ## PR-02 offline runtime
 
