@@ -242,3 +242,28 @@ def test_offline_examples_execute_as_real_processes(tmp_path):
         cwd=root, text=True, capture_output=True, check=True,
     )
     assert "请提供径向载荷" in cli.stdout
+
+
+def test_cas_conflict_keeps_message_retryable_without_duplicate_effect(rig,monkeypatch):
+    manager,service,design=rig
+    original=manager.repository.commit_interaction
+    once={"pending":True}
+
+    def concurrent_change(state,expected,intent,receipt):
+        if once["pending"]:
+            once["pending"]=False
+            manager.apply_patch(design.design_id,expected,{"source":"agent"})
+        return original(state,expected,intent,receipt)
+
+    monkeypatch.setattr(manager.repository,"commit_interaction",concurrent_change)
+    with pytest.raises(StateConflictError):
+        service.submit_turn(design.design_id,"轴径100mm","cas-retry")
+    assert "journal_diameter" not in manager.get_design(design.design_id).parameters
+    monkeypatch.setattr(manager.repository,"commit_interaction",original)
+    receipt,view=service.submit_turn(design.design_id,"轴径100mm","cas-retry")
+    assert not receipt.replayed
+    assert view.parameters["journal_diameter"]["value"]==100
+    state=manager.get_design(design.design_id)
+    assert state.parameters["journal_diameter"].revision==1
+    assert sum(event.details.get("interaction_operation_id")=="cas-retry"
+               for event in state.event_history)==1
