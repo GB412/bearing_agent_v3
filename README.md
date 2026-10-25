@@ -2,8 +2,9 @@
 
 PR-01 domain foundation and PR-02 controlled offline LangGraph runtime for a cylindrical
 radial hydrodynamic journal bearing design assistant. FakePlanner/FakeAgent demonstrate
-safe workflow execution. The project does not call an LLM, load engineering limits,
-recommend bearing geometry/materials, perform formal prechecks, or connect DLAP.
+safe workflow execution. Real LLM planning is opt-in; the default execution stays
+fully offline. The project does not load engineering limits, recommend bearing
+geometry/materials, perform formal prechecks, or connect DLAP.
 
 ## Requirements
 
@@ -90,11 +91,28 @@ compatibility import; this project uses Pydantic v2. Python 3.11 is also a CI ta
 
 ## PR-02B real LLMPlanner (opt-in)
 
-Install the optional adapter with `python -m pip install -e ".[llm]"`, then set
-`OPENAI_API_KEY` and optionally `BEARING_PLANNER_MODEL`. The default runtime remains
-offline and uses `FakePlanner`; the real planner never falls back silently when the
-model is unavailable or returns an invalid proposal. Run
-`python examples/pr02b_llm_planner_demo.py` to inspect the explicit pending/configured
-state. Real experiments must record the model metadata and Guard verdicts described in
-`docs/pr02b_acceptance.md`.
+Install the optional adapter with `python -m pip install -e ".[dev,llm]"`.
+The default Runtime uses `FakePlanner` and never calls an external API.
+For a real model, configure these **process-local** environment variables:
 
+- `BEARING_LLM_ENABLED=true` (required opt-in)
+- `BEARING_LLM_API_KEY` (secret; never store in Git, chat or console command history)
+- `BEARING_LLM_BASE_URL` (OpenAI-compatible Chat Completions endpoint, e.g. `https://api.deepseek.com`)
+- `BEARING_PLANNER_MODEL` (a model ID supported by the provider)
+
+In PowerShell, set the non-secret values with `$env:BEARING_LLM_ENABLED = "true"`
+and analogous assignments. Input the key interactively with
+`Read-Host "API Key" -AsSecureString`, then securely convert it to the
+process environment variable. Do not paste a literal key into the terminal command.
+This adapter uses `json_mode` structured output with Pydantic validation,
+`timeout=120` seconds, and zero SDK retries (the planner itself allows at most
+one bounded retry). Provider compatibility still requires real smoke testing.
+
+Run `python examples/pr02b_llm_planner_demo.py` for a synthetic LangGraph run, or
+`python examples/pr02b_real_experiment.py .venv/pr02b_results.jsonl` to run
+B01–B07 manually. The latter makes paid API calls, records real Guard verdicts,
+and reports **interface validation separately from planner oracle accuracy**.
+`REAL_LLM_VALIDATED` means the model responded with valid proposals for all
+fixtures; `planning_acceptance` reports the independent small-sample ≥85%
+prototype reference threshold. Neither implies engineering validation.
+See `docs/pr02b_acceptance.md` for reproducibility and known limitations.

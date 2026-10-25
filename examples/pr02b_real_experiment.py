@@ -127,10 +127,18 @@ def run_cases(manager, planner):
         verdict = record["guard_verdict"]
         verdicts[verdict] = verdicts.get(verdict, 0) + 1
     parsed = sum(record["parsed_ok"] for record in records)
+    oracle_matches = sum(record["planner_oracle_match"] for record in records)
+    match_rate = oracle_matches / len(records) if records else 0.0
     totals = {
         "fixture_count": len(records), "valid_proposals": parsed,
-        "planner_oracle_matches": sum(record["planner_oracle_match"] for record in records),
+        "planner_oracle_matches": oracle_matches,
+        "planner_oracle_match_rate": round(match_rate, 4),
         "guard_verdict_counts": verdicts,
+        "guard_block_count": verdicts.get("BLOCK", 0),
+        # Prototype reference criterion, not an engineering acceptance certificate.
+        "planning_acceptance": (
+            "PASS" if parsed == len(records) and match_rate >= 0.85 else "FAIL"
+        ),
         "experiment_complete": parsed == len(records),
         "real_model_status": (
             "REAL_LLM_VALIDATED" if parsed == len(records) and planner.provider != "injected"

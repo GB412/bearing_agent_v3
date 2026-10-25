@@ -105,6 +105,12 @@ def build_prompt(summary: StateSummary, context: PlannerContext) -> str:
 
 
 def _proposal_from_response(response: Any) -> PlannerProposal:
+    # include_raw=True preserves the AIMessage for token accounting, while
+    # LangChain's parsed result still has to pass our strict Pydantic contract.
+    if isinstance(response, dict) and "raw" in response and "parsed" in response:
+        if response.get("parsing_error") is not None:
+            raise PlannerError("MODEL_OUTPUT_INVALID", "Structured model parsing failed")
+        response = response["parsed"]
     if isinstance(response, PlannerProposal):
         return response
     content = getattr(response, "content", response)
@@ -177,8 +183,12 @@ class LLMPlanner:
                 base_url=base_url or DEFAULT_BASE_URL,
                 model=model_name,
                 temperature=0,
+                timeout=120,
+                max_retries=0,
             )
-            return client.with_structured_output(PlannerProposal, method="json_mode")
+            return client.with_structured_output(
+                PlannerProposal, method="json_mode", include_raw=True
+            )
         except Exception as exc:
             raise PlannerError("MODEL_CONFIGURATION_INVALID", type(exc).__name__) from exc
 
@@ -189,7 +199,9 @@ class LLMPlanner:
 
     @staticmethod
     def _token_usage(response: Any) -> Any:
-        """Read provider usage when the adapter exposes it; otherwise be explicit."""
+        """Read token usage from the raw AIMessage, never from parsed JSON."""
+        if isinstance(response, dict) and "raw" in response:
+            response = response["raw"]
         metadata = getattr(response, "response_metadata", None)
         if isinstance(metadata, dict):
             usage = metadata.get("token_usage") or metadata.get("usage")
@@ -250,6 +262,7 @@ class LLMPlanner:
         }
         spec = self.catalog.get(proposal.action)
         if spec is None or not spec.supported:
+            self.last_metadata["reason_code"] = "UNKNOWN_ACTION"
             raise PlannerError("UNKNOWN_ACTION", proposal.action)
         return PlanDecision(
             action=proposal.action,
