@@ -798,6 +798,37 @@ class StateManager:
             context=context,
         )
 
+    def reject_pending_constraint(
+        self, design_id: str, expected_version: int, constraint_id: str,
+        revision: int, *, context: WriteContext,
+    ) -> DesignState:
+        """Explicit trusted rejection removes an inert proposal but preserves audit."""
+        if context.kind != WriterKind.USER or not context.actor:
+            raise StateManagerError("Constraint rejection requires trusted USER context")
+        current = self.get_design(design_id)
+        if current.state_version != expected_version:
+            raise VersionConflictError("Constraint rejection has a stale domain version")
+        item = next((c for c in current.constraints if c.id == constraint_id), None)
+        if item is None or item.revision != revision or item.approved:
+            raise VersionConflictError("Constraint is absent, stale or already approved")
+        updated = current.model_copy(deep=True)
+        updated.constraints = [c for c in updated.constraints if c.id != constraint_id]
+        updated.state_version += 1
+        changed = {"constraints", f"constraint:{constraint_id}"}
+        invalidated = invalidate_dependents(updated, changed)
+        updated.event_history.append(StateEvent(
+            design_id=design_id, from_version=expected_version,
+            to_version=updated.state_version, changed_fields=sorted(changed),
+            source="user", actor=context.actor,
+            details={
+                "constraint_decision": "REJECT",
+                "constraint_id": constraint_id, "constraint_revision": revision,
+                "invalidated_objects": invalidated.invalidated_objects,
+            },
+        ))
+        self.repository.save(self._validate_state(updated), expected_version)
+        return updated
+
     def confirm_parameter(
         self,
         design_id: str,
