@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 import pytest
 from examples.pr02b_real_experiment import run_cases
@@ -46,6 +47,34 @@ class StubModel:
         return response
 
 
+def test_structured_raw_response_preserves_token_usage():
+    raw_message = SimpleNamespace(
+        response_metadata={"token_usage": {"prompt_tokens": 25, "completion_tokens": 7}}
+    )
+    model = StubModel([{
+        "raw": raw_message,
+        "parsed": {"action": "clarify_requirement", "rationale": "load is missing"},
+        "parsing_error": None,
+    }])
+    planner = LLMPlanner(model=model, max_retries=0)
+    decision = planner.plan(summary())
+
+    assert decision.action == "clarify_requirement"
+    assert planner.last_metadata["token_usage"] == {
+        "prompt_tokens": 25, "completion_tokens": 7
+    }
+
+
+def test_raw_response_parser_failure_is_controlled():
+    model = StubModel([{
+        "raw": SimpleNamespace(content="not json"),
+        "parsed": None,
+        "parsing_error": ValueError("invalid JSON"),
+    }])
+    with pytest.raises(PlannerError, match="MODEL_OUTPUT_INVALID"):
+        LLMPlanner(model=model, max_retries=0).plan(summary())
+
+
 def test_structured_proposal_is_completed_from_trusted_catalog():
     model = StubModel([{"action": "clarify_requirement", "rationale": "load is missing"}])
     decision = LLMPlanner(model=model).plan(summary())
@@ -70,8 +99,14 @@ def test_real_experiment_entrypoint_passes_explicit_budget(manager):
     ] * 7)
     planner = LLMPlanner(model=model, max_retries=0)
 
-    records, _totals = run_cases(manager, planner)
+    records, totals = run_cases(manager, planner)
 
+    assert totals["valid_proposals"] == 7
+    assert totals["planner_oracle_matches"] == 2
+    assert totals["planner_oracle_match_rate"] == pytest.approx(2 / 7, abs=0.0001)
+    assert totals["guard_block_count"] >= 0
+    assert totals["planning_acceptance"] == "FAIL"
+    assert totals["real_model_status"] == "OFFLINE_ONLY"
     assert len(model.prompts) == 7
     assert all(
         record["remaining_steps"] == 12 and record["remaining_errors"] == 3
@@ -170,6 +205,25 @@ def test_runtime_uses_llm_planner_through_existing_guard(ready, runtime_factory)
     assert committed == ["analyze_conditions", "generate_candidate", "produce_summary"]
     assert not any(row.get("stage") == "planner_error" for row in result["trace"])
     assert all(row.get("guard") != "BLOCK" for row in result["trace"])
+
+
+def test_runtime_trace_has_per_step_nonsecret_planner_metadata(ready, runtime_factory):
+    raw_message = SimpleNamespace(
+        response_metadata={"token_usage": {"prompt_tokens": 15, "completion_tokens": 6}}
+    )
+    planner = LLMPlanner(model=StubModel([{
+        "raw": raw_message,
+        "parsed": {"action": "produce_summary", "rationale": "summarize demo"},
+        "parsing_error": None,
+    }]), max_retries=0)
+
+    result = runtime_factory(planner=planner).invoke(ready.design_id)
+    entry = next(row for row in result["trace"] if row["stage"] == "plan")
+    audit = entry["planner_metadata"]
+    assert audit["token_usage"]["prompt_tokens"] == 15
+    assert audit["prompt_version"] == "pr02b-planner-v1"
+    assert "base_url" not in audit
+    assert "api_key" not in str(audit).lower()
 
 
 def test_runtime_model_failure_is_controlled_without_fake_fallback(ready, runtime_factory):
