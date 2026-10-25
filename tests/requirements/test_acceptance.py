@@ -62,6 +62,11 @@ def test_synthetic_dialogue_oracles(rig,case_id,text,key,expected):
         assert not view.input_ready
     elif expected=="SCOPE_UNKNOWN":
         assert view.scope=="unknown"
+    elif expected=="MISSING_ROTATIONAL_SPEED":
+        # QuestionPlanner deliberately limits a turn to three priorities.
+        assert "rotational_speed" in {
+            p.parameter_id for p in manager.readiness_for(design.design_id, "R2").missing
+        }
     else:
         assert any(q.reason_code==expected for q in view.questions)
     if key and expected not in {"VALUE_100"}:
