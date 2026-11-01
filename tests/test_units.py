@@ -41,3 +41,8 @@ def test_projected_mean_pressure_reference_case():
 def test_pressure_rejects_non_positive_values(load, diameter, width):
     with pytest.raises(ValueError):
         projected_mean_pressure(load, diameter, width)
+
+
+def test_micrometre_and_per_mille_units_normalize_to_base_units():
+    assert normalize(25, "μm", "length") == pytest.approx((25e-6, "m"))
+    assert normalize(1.6, "‰", "dimensionless") == pytest.approx((0.0016, "1"))

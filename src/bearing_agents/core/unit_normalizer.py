@@ -23,6 +23,8 @@ UNITS: dict[str, UnitDefinition] = {
     "kPa": UnitDefinition("pressure", 1e3, "Pa"),
     "MPa": UnitDefinition("pressure", 1e6, "Pa"),
     "m/s": UnitDefinition("speed", 1.0, "m/s"),
+    "μm": UnitDefinition("length", 1e-6, "m"),
+    "‰": UnitDefinition("dimensionless", 1e-3, "1"),
     "1": UnitDefinition("dimensionless", 1.0, "1"),
 }
 
