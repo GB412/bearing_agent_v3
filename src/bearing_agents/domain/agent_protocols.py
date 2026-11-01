@@ -135,12 +135,16 @@ class RuleRecord(BaseModel):
             raise ValueError("An active rule requires an expert reviewer")
         if self.operation == "PARAMETER_COMPARE":
             if len(self.inputs) != 1 or self.operator is None or self.target is None:
-                raise ValueError("An active comparison rule requires one input, operator and target")
+                raise ValueError(
+                    "An active comparison rule requires one input, operator and target"
+                )
             if isinstance(self.target, (int, float)) and self.target_unit is None:
                 raise ValueError("An active numeric comparison rule requires a target unit")
         elif self.operation == "TABLE_LOOKUP":
             if not self.table_ref or not self.inputs:
-                raise ValueError("An active table lookup rule requires a table reference and inputs")
+                raise ValueError(
+                    "An active table lookup rule requires a table reference and inputs"
+                )
         else:
             raise ValueError(f"Unsupported active rule operation: {self.operation}")
         return self

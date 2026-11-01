@@ -1,11 +1,11 @@
 import math
 from enum import StrEnum
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from bearing_agents.core.unit_normalizer import UnitError, normalize
-from bearing_agents.domain.agent_protocols import RuleRecord
 from bearing_agents.domain.constraints import ConstraintRecord
 from bearing_agents.domain.enums import (
     ConstraintOperator,
@@ -17,8 +17,8 @@ from bearing_agents.domain.enums import (
 from bearing_agents.domain.parameter_registry import ParameterSchemaError, ParameterSchemaRegistry
 from bearing_agents.domain.parameters import ParameterRecord
 from bearing_agents.knowledge.catalog import SourceCatalog
-from bearing_agents.knowledge.repositories import RuleRepository, TableRepository
 from bearing_agents.knowledge.models import TableLookupStatus
+from bearing_agents.knowledge.repositories import RuleRepository, TableRepository
 
 
 class RuleEvaluationStatus(StrEnum):
@@ -109,7 +109,10 @@ class RuleEngine:
             if is_steady_state is None:
                 return self._result(
                     rule.rule_id, rule.version, RuleEvaluationStatus.REVIEW_REQUIRED,
-                    "The operating regime is unknown; steady-state applicability cannot be assumed.",
+                    (
+                        "The operating regime is unknown; "
+                        "steady-state applicability cannot be assumed."
+                    ),
                 )
             if is_steady_state is False:
                 return self._result(
@@ -152,7 +155,10 @@ class RuleEngine:
             if self._tables is None or not rule.table_ref or not rule.inputs:
                 return self._result(
                     rule.rule_id, rule.version, RuleEvaluationStatus.REVIEW_REQUIRED,
-                    "The table lookup rule is missing its table repository, table reference or inputs.",
+                    (
+                        "The table lookup rule is missing its table repository, "
+                        "table reference or inputs."
+                    ),
                     source_ref=source_ref,
                 )
             coordinates: dict[str, tuple[float, str]] = {}
@@ -294,7 +300,9 @@ class RuleEngine:
                     ConstraintOperator.LE, ConstraintOperator.GE,
                     ConstraintOperator.LT, ConstraintOperator.GT,
                 }:
-                    raise ValueError("Ordered comparisons are not supported for category parameters.")
+                    raise ValueError(
+                        "Ordered comparisons are not supported for category parameters."
+                    )
                 if operator == ConstraintOperator.EQ:
                     if not isinstance(target, str):
                         raise ValueError("Category EQ requires a string target.")
@@ -310,7 +318,10 @@ class RuleEngine:
                 expected = target
                 actual_base_unit = None
             else:
-                raise ValueError(f"Unsupported parameter type for rule evaluation: {schema.value_type}")
+                raise ValueError(
+                    "Unsupported parameter type for rule evaluation: "
+                    f"{schema.value_type}"
+                )
         except (UnitError, TypeError, ValueError) as exc:
             return self._result(
                 rule_id, version, RuleEvaluationStatus.INVALID,

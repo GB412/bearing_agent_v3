@@ -157,7 +157,10 @@ class TableRepository:
                 table_id=table_id,
                 table_version=table.version,
                 source_ref=source_ref,
-                message="Coordinates are outside the reviewed table domain; extrapolation is forbidden.",
+                message=(
+                    "Coordinates are outside the reviewed table domain; "
+                    "extrapolation is forbidden."
+                ),
             )
         if len(matches) > 1:
             return TableLookupResult(

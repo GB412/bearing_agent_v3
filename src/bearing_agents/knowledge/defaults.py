@@ -35,7 +35,10 @@ def build_default_knowledge_base() -> KnowledgeBase:
                     "2024_滑动轴承标准草案.zip/20240621-标准草案/"
                     "07 滑动轴承 稳态条件下流体动压径向滑动轴承 圆柱形轴承 第1部分：计算原理.docx"
                 ),
-                description="User-supplied Chinese draft; publication and expert approval are not established.",
+                description=(
+                    "User-supplied Chinese draft; publication and expert approval "
+                    "are not established."
+                ),
             ),
             SourceDocument(
                 source_id="draft-gbt-21466-2-2024",
@@ -47,9 +50,13 @@ def build_default_knowledge_base() -> KnowledgeBase:
                 reference_standard="ISO 7902-2:2020",
                 locator=(
                     "2024_滑动轴承标准草案.zip/20240621-标准草案/"
-                    "08 滑动轴承 稳态条件下流体动压径向滑动轴承 圆柱形轴承 第2部分：特征数值.docx"
+                    "08 滑动轴承 稳态条件下流体动压径向滑动轴承 "
+                    "圆柱形轴承 第2部分：特征数值.docx"
                 ),
-                description="Large characteristic-value tables; structured extraction is deferred until a concrete model needs them.",
+                description=(
+                    "Large characteristic-value tables; structured extraction is deferred "
+                    "until a concrete model needs them."
+                ),
             ),
             SourceDocument(
                 source_id="draft-gbt-21466-3-2024",
@@ -61,9 +68,13 @@ def build_default_knowledge_base() -> KnowledgeBase:
                 reference_standard="ISO 7902-3:2020",
                 locator=(
                     "2024_滑动轴承标准草案.zip/20240621-标准草案/"
-                    "09 滑动轴承 稳态条件下流体动压径向滑动轴承 圆柱形轴承 第3部分：许用运行参数.docx"
+                    "09 滑动轴承 稳态条件下流体动压径向滑动轴承 "
+                    "圆柱形轴承 第3部分：许用运行参数.docx"
                 ),
-                description="User-supplied draft; the file contains placeholder publication dates and is not an approved rule source.",
+                description=(
+                    "User-supplied draft; the file contains placeholder publication "
+                    "dates and is not an approved rule source."
+                ),
             ),
         ]
     )

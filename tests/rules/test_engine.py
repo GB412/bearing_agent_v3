@@ -46,7 +46,12 @@ def comparison_rule(operator=ConstraintOperator.LE, target=50, target_unit="mm")
     )
 
 
-def parameter(value, unit="mm", role=ParameterRole.DESIGN_VARIABLE, status=ParameterStatus.SUGGESTED):
+def parameter(
+    value,
+    unit="mm",
+    role=ParameterRole.DESIGN_VARIABLE,
+    status=ParameterStatus.SUGGESTED,
+):
     return ParameterRecord(value=value, unit=unit, role=role, status=status)
 
 
