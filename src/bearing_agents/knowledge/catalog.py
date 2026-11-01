@@ -28,7 +28,7 @@ class SourceCatalog:
 
 
 class KnowledgeRepository:
-    """Deterministic lexical search over reviewed summaries and source metadata."""
+    """Deterministic lexical search over curated summaries and source metadata."""
 
     def __init__(
         self,
@@ -56,7 +56,16 @@ class KnowledgeRepository:
     def search(self, query: str, *, limit: int = 10) -> list[KnowledgeHit]:
         if limit < 1:
             raise ValueError("limit must be positive")
-        terms = re.findall(r"[\u4e00-\u9fff]+|[a-z0-9]+", query.lower())
+        chunks = re.findall(r"[\u4e00-\u9fff]+|[a-z0-9]+", query.lower())
+        terms: list[str] = []
+        for chunk in chunks:
+            if re.fullmatch(r"[\u4e00-\u9fff]+", chunk):
+                if len(chunk) == 1:
+                    terms.append(chunk)
+                else:
+                    terms.extend(chunk[index:index + 2] for index in range(len(chunk) - 1))
+            else:
+                terms.append(chunk)
         if not terms:
             return []
 
