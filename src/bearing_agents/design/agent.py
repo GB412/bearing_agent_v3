@@ -1,8 +1,10 @@
 from bearing_agents.core.readiness import readiness_for
 from bearing_agents.design.contracts import CandidateProposal, ConditionAnalysis, DesignStrategy
-from bearing_agents.domain.agent_protocols import AgentResult, TaskRecord
+from bearing_agents.domain.agent_protocols import AgentResult, StatePatch, TaskRecord
+from bearing_agents.domain.candidates import CandidateDesign
 from bearing_agents.domain.enums import AgentResultStatus, RuleStatus
 from bearing_agents.domain.parameter_registry import ParameterSchemaRegistry
+from bearing_agents.domain.parameters import ParameterRecord
 from bearing_agents.domain.state import DesignState
 from bearing_agents.domain.tasks import engineering_digest
 from bearing_agents.knowledge.defaults import KnowledgeBase, build_default_knowledge_base
@@ -54,9 +56,16 @@ class DesignAgent:
                 if proposal.status == "PARTIAL"
                 else AgentResultStatus.INSUFFICIENT_RULES
             )
+            candidate = self._candidate_from_proposal(proposal)
+            patch = (
+                StatePatch(candidate_additions=[candidate], source="design_agent")
+                if candidate is not None
+                else None
+            )
             return AgentResult(
                 task_id=task.id,
                 status=status,
+                state_patch=patch,
                 issues=[
                     strategy.model_dump(mode="json"),
                     proposal.model_dump(mode="json"),
@@ -162,6 +171,25 @@ class DesignAgent:
                 "User fixed inputs and approved constraints are not design variables.",
                 "Table lookup never interpolates or extrapolates.",
             ],
+        )
+
+    @staticmethod
+    def _candidate_from_proposal(proposal: CandidateProposal) -> CandidateDesign | None:
+        if not proposal.parameters:
+            return None
+        parameters = {
+            parameter_id: ParameterRecord(
+                value=item["value"], unit=item["unit"], role="DESIGN_VARIABLE",
+                status="SUGGESTED", source="engineering_table", source_ref=item["source_ref"],
+            )
+            for parameter_id, item in proposal.parameters.items()
+        }
+        assumptions = list(proposal.explanation)
+        if proposal.unresolved_parameters:
+            assumptions.append("Unresolved design variables: " + ", ".join(proposal.unresolved_parameters))
+        return CandidateDesign(
+            candidate_id=f"candidate-{proposal.proposal_id}", version=1,
+            parameters=parameters, assumptions=assumptions, rule_refs=proposal.evidence_refs,
         )
 
     def propose_candidate(
