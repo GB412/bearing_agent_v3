@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from bearing_agents.domain.enums import RuleStatus
 from bearing_agents.knowledge.catalog import SourceCatalog
 from bearing_agents.knowledge.defaults import build_default_knowledge_base
@@ -168,3 +171,41 @@ def test_table_rejects_source_version_mismatch():
         assert "version mismatch" in str(exc)
     else:
         raise AssertionError("A mismatched source version must be rejected.")
+
+
+
+def test_table_rejects_non_finite_ranges_and_outputs():
+    with pytest.raises(ValidationError):
+        NumericRange(lower=float("nan"), upper=10)
+    with pytest.raises(ValidationError):
+        NumericRange(lower=0, upper=float("inf"))
+    with pytest.raises(ValidationError):
+        TableRow(
+            row_id="bad",
+            ranges={
+                "journal_diameter": NumericRange(lower=50, upper=150),
+                "surface_speed": NumericRange(lower=5, upper=10),
+            },
+            values={"clearance_ratio": float("nan")},
+        )
+
+
+def test_table_repository_rejects_unknown_output_units():
+    source = reviewed_source()
+    catalog = SourceCatalog([source])
+    table = make_table([
+        TableRow(
+            row_id="row",
+            ranges={
+                "journal_diameter": NumericRange(lower=50, upper=150),
+                "surface_speed": NumericRange(lower=5, upper=10, include_upper=True),
+            },
+            values={"clearance_ratio": 1.6},
+        )
+    ]).model_copy(update={"output_units": {"clearance_ratio": "unknown-unit"}})
+    try:
+        TableRepository([table], catalog)
+    except ValueError as exc:
+        assert "Unknown table unit" in str(exc)
+    else:
+        raise AssertionError("Unknown output units must be rejected.")
