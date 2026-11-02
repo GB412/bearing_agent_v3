@@ -1,3 +1,5 @@
+import pytest
+
 from bearing_agents.design.agent import DesignAgent
 from bearing_agents.domain.enums import ParameterRole, ParameterStatus
 from bearing_agents.domain.operating_cases import OperatingCase
@@ -50,5 +52,5 @@ def test_mean_pressure_is_explicitly_projected_mean_pressure():
     state.parameters["bearing_width"] = ParameterRecord(value=50, unit="mm",
         role=ParameterRole.DESIGN_VARIABLE, status=ParameterStatus.SUGGESTED)
     result = DesignAgent().analyze_conditions(state)
-    assert result.derived_metrics["mean_pressure"]["value"] == 2_400_000
+    assert result.derived_metrics["mean_pressure"]["value"] == pytest.approx(2_400_000)
     assert "not local maximum" in result.derived_metrics["mean_pressure"]["meaning"]
