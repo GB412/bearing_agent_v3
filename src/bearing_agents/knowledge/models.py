@@ -85,6 +85,13 @@ class TableRow(BaseModel):
     ranges: dict[str, NumericRange]
     values: dict[str, Any]
 
+    @model_validator(mode="after")
+    def validate_numeric_outputs(self) -> "TableRow":
+        for value in self.values.values():
+            if isinstance(value, float) and not math.isfinite(value):
+                raise ValueError("Numeric table outputs must be finite")
+        return self
+
 
 class EngineeringTable(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -119,9 +126,6 @@ class EngineeringTable(BaseModel):
                 raise ValueError("Every table row must define every input axis exactly once")
             if set(row.values) != set(self.output_units):
                 raise ValueError("Every table row must define every output value exactly once")
-            for value in row.values.values():
-                if isinstance(value, float) and not math.isfinite(value):
-                    raise ValueError("Numeric table outputs must be finite")
         return self
 
 
