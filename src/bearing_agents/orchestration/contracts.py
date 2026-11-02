@@ -38,6 +38,7 @@ class GraphState(TypedDict, total=False):
     confirmation: dict | None
     trace: list[dict]
     questions: list[dict]
+    agent_outputs: list[dict]
 
 
 @dataclass(frozen=True)
@@ -253,6 +254,6 @@ def validate_result(result: AgentResult, task_id: str) -> AgentResult:
     if result.state_patch is not None:
         # This PR intentionally grants FakeAgent no engineering effects at all.
         raise ValueError("DOMAIN_PATCH_NOT_ALLOWED")
-    if result.status != AgentResultStatus.SUCCESS:
+    if result.status == AgentResultStatus.FAILED:
         raise ValueError("AGENT_FAILED")
     return result
