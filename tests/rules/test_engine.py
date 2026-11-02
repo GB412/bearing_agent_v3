@@ -226,3 +226,20 @@ def test_user_constraint_is_evaluated_separately_from_engineering_rules():
     assert pending_result.status == RuleEvaluationStatus.REVIEW_REQUIRED
     assert approved_result.status == RuleEvaluationStatus.FAIL
     assert approved_result.source_ref == "user-constraint:width-cap@2"
+
+
+
+def test_non_user_constraint_cannot_use_user_constraint_evaluation_path():
+    engine = make_engine()
+    forged = ConstraintRecord(
+        id="agent-width-cap",
+        parameter="bearing_width",
+        operator=ConstraintOperator.LE,
+        target=50,
+        unit="mm",
+        severity=ConstraintSeverity.HARD,
+        origin="agent",
+        approved=True,
+    )
+    result = engine.evaluate_constraint(forged, {"bearing_width": parameter(40)})
+    assert result.status == RuleEvaluationStatus.INVALID
