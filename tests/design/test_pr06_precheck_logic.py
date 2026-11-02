@@ -202,8 +202,8 @@ def test_atomic_candidate_commit_replays_exact_intent(manager, ready):
         manager.commit_candidate_task(
             ready.design_id, started.state_version,
             TaskCommand(
-                operation_id="design-task-test:other-complete",
-                task_id=task.id, kind="complete", reason="stale",
+                operation_id="stale-design-task:complete",
+                task_id="stale-design-task", kind="complete", reason="stale",
                 expected_input_digest=digest, output_ref="candidate:full-synthetic@1",
             ),
             complete_candidate(), context=SYSTEM,
