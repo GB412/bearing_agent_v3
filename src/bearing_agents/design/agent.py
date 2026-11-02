@@ -1,7 +1,7 @@
 from bearing_agents.core.readiness import readiness_for
 from bearing_agents.design.contracts import CandidateProposal, ConditionAnalysis, DesignStrategy
-from bearing_agents.domain.candidate_lifecycle import missing_design_variables
 from bearing_agents.domain.agent_protocols import AgentResult, StatePatch, TaskRecord
+from bearing_agents.domain.candidate_lifecycle import missing_design_variables
 from bearing_agents.domain.candidates import CandidateDesign
 from bearing_agents.domain.enums import (
     AgentResultStatus,
