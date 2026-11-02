@@ -24,7 +24,6 @@ from bearing_agents.knowledge.models import SourceDocument
 from bearing_agents.knowledge.repositories import RuleRepository, TableRepository
 from bearing_agents.validation.agent import RuleCoverageSpec, ValidationAgent
 
-
 SYSTEM = WriteContext(kind=WriterKind.SYSTEM, actor="pr06-synthetic-test")
 
 
