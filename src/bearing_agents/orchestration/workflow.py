@@ -434,6 +434,15 @@ class Runtime:
                 break
             except (VersionConflictError, StateConflictError):
                 continue
+            except StateManagerError as exc:
+                self._expire_active_task(state, "CANDIDATE_COMMIT_REJECTED")
+                return {
+                    "termination_reason": "CANDIDATE_REJECTED",
+                    "errors": state["errors"] + 1,
+                    "trace": self._trace(
+                        state, stage="candidate_rejected", reason=type(exc).__name__,
+                    ),
+                }
         if receipt is None:
             self._expire_active_task(
                 state,
