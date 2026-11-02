@@ -48,11 +48,18 @@ class ValidationAgent:
         )
 
     def evaluate(self, state: DesignState, candidate: CandidateDesign) -> CandidatePrecheckReport:
-        if not any(
-            item.candidate_id == candidate.candidate_id and item.version == candidate.version
-            for item in state.candidate_designs
-        ):
+        persisted = next(
+            (
+                item for item in state.candidate_designs
+                if item.candidate_id == candidate.candidate_id
+                and item.version == candidate.version
+            ),
+            None,
+        )
+        if persisted is None:
             raise ValueError("Candidate must exist in the authoritative state")
+        if candidate.model_dump(mode="json") != persisted.model_dump(mode="json"):
+            raise ValueError("Candidate data differs from the authoritative snapshot")
         missing = missing_design_variables(candidate.parameters, state.parameters)
         issues: list[str] = []
         checks: list[dict] = []
