@@ -15,6 +15,7 @@ from bearing_agents.domain.parameters import ParameterRecord
 from bearing_agents.domain.write_context import WriteContext, WriterKind
 from bearing_agents.orchestration.contracts import validate_result
 from bearing_agents.validation.agent import RuleCoverageSpec, ValidationAgent
+from bearing_agents.validation.service import ValidationService
 
 SYSTEM = WriteContext(kind=WriterKind.SYSTEM, actor="pr06-validation")
 USER = WriteContext(kind=WriterKind.USER, actor="test-designer")
@@ -221,3 +222,16 @@ def test_design_agent_can_propose_partial_from_user_supplied_width(manager, read
     assert result.state_patch.candidate_additions[0].parameters["bearing_width"].status == (
         ParameterStatus.SUGGESTED
     )
+
+
+def test_trusted_validation_service_records_only_review_required(manager, ready):
+    state = manager.apply_patch(
+        ready.design_id, ready.state_version,
+        StatePatch(source="test", candidate_additions=[partial_candidate()]),
+    )
+    report = ValidationService(manager).assess(state.design_id, "partial-01", 1)
+    assert report.status == PrecheckStatus.REVIEW_REQUIRED
+    stored = manager.get_design(state.design_id)
+    assert stored.candidate_designs[0].precheck_report == report
+    assert stored.event_history[-1].source == "validation"
+    assert stored.event_history[-1].details["precheck_status"] == "REVIEW_REQUIRED"
