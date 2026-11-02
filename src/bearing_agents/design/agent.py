@@ -51,11 +51,11 @@ class DesignAgent:
         if task.action == "generate_candidate":
             strategy = self.build_strategy(state)
             proposal = self.propose_candidate(state, strategy)
-            status = (
-                AgentResultStatus.SUCCESS
-                if proposal.status == "PARTIAL"
-                else AgentResultStatus.INSUFFICIENT_RULES
-            )
+            status = {
+                "COMPLETE": AgentResultStatus.SUCCESS,
+                "PARTIAL": AgentResultStatus.NEEDS_REVIEW,
+                "INSUFFICIENT_RULES": AgentResultStatus.INSUFFICIENT_RULES,
+            }[proposal.status]
             candidate = self._candidate_from_proposal(proposal)
             patch = (
                 StatePatch(candidate_additions=[candidate], source="design_agent")
@@ -175,7 +175,7 @@ class DesignAgent:
 
     @staticmethod
     def _candidate_from_proposal(proposal: CandidateProposal) -> CandidateDesign | None:
-        if not proposal.parameters:
+        if proposal.status != "COMPLETE":
             return None
         parameters = {
             parameter_id: ParameterRecord(
@@ -229,7 +229,11 @@ class DesignAgent:
         unresolved = [key for key in self.DESIGN_VARIABLES if key not in suggestions]
         return CandidateProposal(
             proposal_id=engineering_digest(state)[:16],
-            status="PARTIAL" if suggestions else "INSUFFICIENT_RULES",
+            status=(
+                "COMPLETE" if not unresolved
+                else "PARTIAL" if suggestions
+                else "INSUFFICIENT_RULES"
+            ),
             parameters=suggestions,
             unresolved_parameters=unresolved,
             evidence_refs=sorted(set(refs)),
