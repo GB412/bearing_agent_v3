@@ -182,3 +182,12 @@ RuleEngine evaluates only ACTIVE rules with verified source versions. User
 constraints are evaluated separately from standard-derived engineering rules.
 Table lookup requires explicit units and non-overlapping ranges; interpolation and
 extrapolation are not performed. See docs/pr04_acceptance.md.
+
+
+## PR-05 condition analysis and design proposals
+
+PR-05 adds a deterministic DesignAgent that can be injected into the existing Runtime using the `conditions_fake` and `design_fake` executor slots. It derives journal surface speed, calculates projected mean pressure only when bearing width is available, retrieves source-linked knowledge, and produces a design strategy and candidate proposal from ACTIVE reviewed tables only.
+
+The bundled GB/T draft material is not active engineering data. With the default knowledge base the expected design result is `INSUFFICIENT_RULES`; the agent does not invent bearing width, clearance, material or lubricant values.
+
+Run `python examples/pr05_design_agent_demo.py`. See `docs/pr05_acceptance.md`.
