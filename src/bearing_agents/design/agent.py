@@ -222,6 +222,7 @@ class DesignAgent:
     ) -> CandidateProposal:
         suggestions = {}
         refs = []
+        conflicted = set()
         for rule in self.knowledge.rules.for_scope(state.target_scope):
             if rule.status != RuleStatus.ACTIVE or rule.operation != "TABLE_LOOKUP":
                 continue
@@ -238,9 +239,21 @@ class DesignAgent:
             if result.status != RuleEvaluationStatus.VALUE_FOUND:
                 continue
             for parameter_id, value in result.values.items():
-                schema = self.parameters.get(parameter_id)
+                if parameter_id not in self.DESIGN_VARIABLES or parameter_id in conflicted:
+                    continue
                 unit = result.units.get(parameter_id)
-                if schema is None or unit is None:
+                if unit is None:
+                    continue
+                try:
+                    self.parameters.validate(parameter_id, value, unit)
+                except ValueError:
+                    continue
+                previous = suggestions.get(parameter_id)
+                if previous is not None and (
+                    previous["value"] != value or previous["unit"] != unit
+                ):
+                    conflicted.add(parameter_id)
+                    del suggestions[parameter_id]
                     continue
                 suggestions[parameter_id] = {
                     "value": value,
@@ -250,7 +263,7 @@ class DesignAgent:
                 }
                 refs.append(result.source_ref or rule.rule_id)
         for key in self.DESIGN_VARIABLES:
-            if key in suggestions:
+            if key in suggestions or key in conflicted:
                 continue
             record = state.parameters.get(key)
             if record is None or record.role != ParameterRole.DESIGN_VARIABLE:
@@ -301,6 +314,11 @@ class DesignAgent:
                     ["No active reviewed table supplied a design-variable value."]
                     if not suggestions
                     else ["Partial proposal: unresolved variables must not be guessed."]
+                )
+                + (
+                    ["Conflicting active table recommendations require expert review: "
+                     + ", ".join(sorted(conflicted))]
+                    if conflicted else []
                 )
             ),
         )
