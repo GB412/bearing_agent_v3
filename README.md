@@ -191,3 +191,18 @@ PR-05 adds a deterministic DesignAgent that can be injected into the existing Ru
 The bundled GB/T draft material is not active engineering data. With the default knowledge base the expected design result is `INSUFFICIENT_RULES`; the agent does not invent bearing width, clearance, material or lubricant values.
 
 Run `python examples/pr05_design_agent_demo.py`. See `docs/pr05_acceptance.md`.
+
+
+## PR-06 partial candidate lifecycle and independent precheck
+
+The first cylindrical hydrodynamic journal-bearing flow now supports **PARTIAL** candidate designs. Missing width, radial clearance, material, or lubricant are recorded explicitly, not filled with guessed defaults. DesignAgent may propose a partial candidate when there is at least one usable design-variable value; StateManager calculates its authoritative completeness and input-dependency snapshot.
+
+Candidate persistence and the successful `generate_candidate` task receipt share a single CAS transaction, with idempotent replay. A separate, deterministic ValidationAgent checks readiness, design-variable coverage, approved hard constraints, ACTIVE reviewed rules and rule-set freshness. When real professional rule coverage is unavailable, the result is `REVIEW_REQUIRED` rather than a false `PRECHECK_PASS`. ValidationService provides the trusted evaluate-and-record entry point.
+
+Run the end-to-end offline demonstration:
+
+```powershell
+python examples/pr06_partial_candidate_demo.py
+```
+
+See `docs/pr06_acceptance.md`. The test-only ACTIVE rules do not represent professional approval of the bundled GB/T drafts. DLAP, oil-film performance, and thermal calculations are not included.
