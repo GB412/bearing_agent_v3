@@ -205,6 +205,12 @@ class RuleEngine:
         rule_id = f"constraint:{constraint.id}"
         version = str(constraint.revision)
         source_ref = constraint.rule_ref or f"user-constraint:{constraint.id}@{constraint.revision}"
+        if constraint.origin != "user":
+            return self._result(
+                rule_id, version, RuleEvaluationStatus.INVALID,
+                "Only trusted user-origin constraints can be evaluated through this path.",
+                source_ref=source_ref, parameter_id=constraint.parameter,
+            )
         if not constraint.approved:
             return self._result(
                 rule_id, version, RuleEvaluationStatus.REVIEW_REQUIRED,
