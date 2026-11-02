@@ -92,7 +92,7 @@ class Runtime:
             "run_id": str(uuid4()), "goal": goal, "target_ref": target_ref,
             "steps": 0, "errors": 0, "same_action_count": 0, "last_signature": "",
             "termination_reason": None, "confirmation": None, "trace": [],
-            "current_task_id": "", "last_result_ref": "", "questions": [],
+            "current_task_id": "", "last_result_ref": "", "questions": [], "agent_outputs": [],
         }, config, durability="sync"))
 
     @staticmethod
@@ -351,6 +351,8 @@ class Runtime:
             result = self.agents[state["executor"]].run(domain.model_copy(deep=True),
                                                         task.model_copy(deep=True))
             validate_result(result, task.id)
+            public_outputs = [item if isinstance(item, dict) else str(item)
+                           for item in result.issues[:8]]
             public_questions = (
                 [
                     {"question_id": str(item["question_id"])[:180],
@@ -395,15 +397,23 @@ class Runtime:
             return {"termination_reason": "VERSION_STALE",
                     "trace": self._trace(state, stage="task_blocked", task_id=task.id,
                                          reason="VERSION_STALE")}
-        return self._completed(state, domain, receipt, questions=public_questions)
+        return self._completed(state, domain, receipt, questions=public_questions,
+                               agent_outputs=public_outputs,
+                               agent_status=result.status.value)
 
-    def _completed(self, state, domain, receipt, *, questions=None):
+    def _completed(self, state, domain, receipt, *, questions=None, agent_outputs=None,
+                   agent_status="SUCCESS"):
         reason = {"clarify_requirement": "MISSING_INPUT", "produce_summary": "GOAL_REACHED",
                   "simulation_unavailable": "UNSUPPORTED_ACTION"}.get(state["action"])
+        if agent_status == "INSUFFICIENT_RULES":
+            reason = "INSUFFICIENT_RULES"
+        elif agent_status == "NEEDS_REVIEW":
+            reason = "NEEDS_REVIEW"
         if domain.target_scope not in {"cylindrical_radial_hydrodynamic", "unknown"}:
             reason = "UNSUPPORTED_ACTION"
         return {"last_result_ref": receipt.event_id, "termination_reason": reason,
                 "questions": questions if questions is not None else state.get("questions", []),
+                "agent_outputs": agent_outputs if agent_outputs is not None else state.get("agent_outputs", []),
                 "trace": self._trace(state, stage="committed", action=state["action"],
                                      task_id=state["current_task_id"],
                                      operation_id=receipt.operation_id,
