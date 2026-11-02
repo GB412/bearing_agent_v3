@@ -10,12 +10,16 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
 from bearing_agents.core.readiness import readiness_for
-from bearing_agents.design.agent import DesignAgent
 from bearing_agents.core.state_manager import StateManager, StateManagerError, VersionConflictError
+from bearing_agents.design.agent import DesignAgent
 from bearing_agents.domain.agent_protocols import PlanDecision, TaskRecord
-from bearing_agents.domain.tasks import TaskReceipt
 from bearing_agents.domain.enums import TaskStatus
-from bearing_agents.domain.tasks import TaskCommand, engineering_digest, fingerprint
+from bearing_agents.domain.tasks import (
+    TaskCommand,
+    TaskReceipt,
+    engineering_digest,
+    fingerprint,
+)
 from bearing_agents.domain.write_context import WriteContext, WriterKind
 from bearing_agents.infra.state_repository import StateConflictError
 from bearing_agents.orchestration.contracts import (
