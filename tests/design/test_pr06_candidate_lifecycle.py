@@ -60,7 +60,9 @@ def test_source_cannot_fake_complete_status_or_precheck_pass(manager, ready):
             ready.design_id, ready.state_version,
             StatePatch(source="untrusted", candidate_additions=[forged]),
         )
-    forged = partial_candidate().model_copy(update={"precheck_status": PrecheckStatus.PRECHECK_PASS})
+    forged = partial_candidate().model_copy(
+        update={"precheck_status": PrecheckStatus.PRECHECK_PASS}
+    )
     with pytest.raises(StateManagerError, match="must start PENDING"):
         manager.apply_patch(
             ready.design_id, ready.state_version,
