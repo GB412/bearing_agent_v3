@@ -351,8 +351,10 @@ class Runtime:
             result = self.agents[state["executor"]].run(domain.model_copy(deep=True),
                                                         task.model_copy(deep=True))
             validate_result(result, task.id)
-            public_outputs = [item if isinstance(item, dict) else str(item)
-                           for item in result.issues[:8]]
+            public_outputs = [
+                item if isinstance(item, dict) else str(item)
+                for item in result.issues[:8]
+            ]
             public_questions = (
                 [
                     {"question_id": str(item["question_id"])[:180],
@@ -413,7 +415,9 @@ class Runtime:
             reason = "UNSUPPORTED_ACTION"
         return {"last_result_ref": receipt.event_id, "termination_reason": reason,
                 "questions": questions if questions is not None else state.get("questions", []),
-                "agent_outputs": agent_outputs if agent_outputs is not None else state.get("agent_outputs", []),
+                "agent_outputs": (
+                    agent_outputs if agent_outputs is not None else state.get("agent_outputs", [])
+                ),
                 "trace": self._trace(state, stage="committed", action=state["action"],
                                      task_id=state["current_task_id"],
                                      operation_id=receipt.operation_id,
