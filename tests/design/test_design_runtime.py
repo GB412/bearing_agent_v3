@@ -1,8 +1,8 @@
 from bearing_agents.core.state_manager import StateManager
 from bearing_agents.design.agent import DesignAgent
 from bearing_agents.infra.state_repository import SQLiteStateRepository
-from bearing_agents.requirements.interaction import InteractionService
 from bearing_agents.orchestration.workflow import open_runtime
+from bearing_agents.requirements.interaction import InteractionService
 
 
 def test_design_agent_runs_through_existing_supervisor_and_exposes_rule_gap(tmp_path):
