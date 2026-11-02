@@ -1,3 +1,4 @@
+import math
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -55,6 +56,11 @@ class NumericRange(BaseModel):
     def validate_bounds(self) -> "NumericRange":
         if self.lower is None and self.upper is None:
             raise ValueError("A table range must have at least one bound")
+        if any(
+            bound is not None and not math.isfinite(bound)
+            for bound in (self.lower, self.upper)
+        ):
+            raise ValueError("Range bounds must be finite")
         if self.lower is not None and self.upper is not None:
             if self.lower > self.upper:
                 raise ValueError("Range lower bound must not exceed upper bound")
@@ -98,6 +104,8 @@ class EngineeringTable(BaseModel):
 
     @model_validator(mode="after")
     def validate_table(self) -> "EngineeringTable":
+        if not self.input_units or not self.output_units:
+            raise ValueError("A table requires at least one input axis and output value")
         if self.status == RuleStatus.ACTIVE:
             if not self.reviewer or not self.reviewer.strip():
                 raise ValueError("An active table requires an expert reviewer")
@@ -111,6 +119,9 @@ class EngineeringTable(BaseModel):
                 raise ValueError("Every table row must define every input axis exactly once")
             if set(row.values) != set(self.output_units):
                 raise ValueError("Every table row must define every output value exactly once")
+            for value in row.values.values():
+                if isinstance(value, float) and not math.isfinite(value):
+                    raise ValueError("Numeric table outputs must be finite")
         return self
 
 
