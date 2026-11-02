@@ -16,7 +16,6 @@ from bearing_agents.domain.write_context import WriteContext, WriterKind
 from bearing_agents.orchestration.contracts import validate_result
 from bearing_agents.validation.agent import RuleCoverageSpec, ValidationAgent
 
-
 SYSTEM = WriteContext(kind=WriterKind.SYSTEM, actor="pr06-validation")
 USER = WriteContext(kind=WriterKind.USER, actor="test-designer")
 
