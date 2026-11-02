@@ -213,3 +213,15 @@ def test_atomic_candidate_commit_replays_exact_intent(manager, ready):
             command, complete_candidate(),
             context=WriteContext(kind=WriterKind.AGENT),
         )
+
+
+def test_validator_rejects_same_id_but_forged_candidate_values(manager, ready):
+    state = manager.apply_patch(
+        ready.design_id, ready.state_version,
+        {"source": "synthetic", "candidate_additions": [complete_candidate()]},
+    )
+    original = state.candidate_designs[0]
+    forged = original.model_copy(deep=True)
+    forged.parameters["bearing_width"].value = 20
+    with pytest.raises(ValueError, match="authoritative snapshot"):
+        synthetic_validation().evaluate(state, forged)
