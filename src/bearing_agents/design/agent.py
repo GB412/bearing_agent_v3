@@ -1,8 +1,16 @@
 from bearing_agents.core.readiness import readiness_for
+from bearing_agents.domain.candidate_lifecycle import missing_design_variables
 from bearing_agents.design.contracts import CandidateProposal, ConditionAnalysis, DesignStrategy
-from bearing_agents.domain.agent_protocols import AgentResult, TaskRecord
-from bearing_agents.domain.enums import AgentResultStatus, RuleStatus
+from bearing_agents.domain.agent_protocols import AgentResult, StatePatch, TaskRecord
+from bearing_agents.domain.candidates import CandidateDesign
+from bearing_agents.domain.enums import (
+    AgentResultStatus,
+    ParameterRole,
+    ParameterStatus,
+    RuleStatus,
+)
 from bearing_agents.domain.parameter_registry import ParameterSchemaRegistry
+from bearing_agents.domain.parameters import ParameterRecord
 from bearing_agents.domain.state import DesignState
 from bearing_agents.domain.tasks import engineering_digest
 from bearing_agents.knowledge.defaults import KnowledgeBase, build_default_knowledge_base
@@ -50,13 +58,20 @@ class DesignAgent:
             strategy = self.build_strategy(state)
             proposal = self.propose_candidate(state, strategy)
             status = (
-                AgentResultStatus.SUCCESS
+                AgentResultStatus.NEEDS_REVIEW
                 if proposal.status == "PARTIAL"
+                else AgentResultStatus.SUCCESS
+                if proposal.status == "COMPLETE"
                 else AgentResultStatus.INSUFFICIENT_RULES
             )
+            candidate = self._candidate_from_proposal(state, proposal)
             return AgentResult(
                 task_id=task.id,
                 status=status,
+                state_patch=(
+                    StatePatch(candidate_additions=[candidate], source="design_agent")
+                    if candidate is not None else None
+                ),
                 issues=[
                     strategy.model_dump(mode="json"),
                     proposal.model_dump(mode="json"),
@@ -164,6 +179,42 @@ class DesignAgent:
             ],
         )
 
+    @staticmethod
+    def _candidate_from_proposal(
+        state: DesignState,
+        proposal: CandidateProposal,
+    ) -> CandidateDesign | None:
+        if not proposal.parameters:
+            return None
+        parameters = {
+            key: ParameterRecord(
+                value=item["value"],
+                unit=item["unit"],
+                role=ParameterRole.DESIGN_VARIABLE,
+                status=ParameterStatus.SUGGESTED,
+                source="candidate_proposal",
+                source_ref=item.get("source_ref"),
+            )
+            for key, item in proposal.parameters.items()
+        }
+        return CandidateDesign(
+            candidate_id=f"candidate-{proposal.proposal_id}",
+            version=1,
+            parent_candidate_id=(
+                state.candidate_designs[-1].candidate_id if state.candidate_designs else None
+            ),
+            parameters=parameters,
+            rule_refs=sorted({
+                item.get("rule_ref", "") for item in proposal.parameters.values()
+                if item.get("rule_ref")
+            }),
+            assumptions=proposal.explanation,
+            unresolved_parameters=proposal.unresolved_parameters,
+            completeness_status=(
+                "PARTIAL" if proposal.unresolved_parameters else "COMPLETE"
+            ),
+        )
+
     def propose_candidate(
         self,
         state: DesignState,
@@ -198,10 +249,49 @@ class DesignAgent:
                     "rule_ref": rule.rule_id,
                 }
                 refs.append(result.source_ref or rule.rule_id)
-        unresolved = [key for key in self.DESIGN_VARIABLES if key not in suggestions]
+        for key in self.DESIGN_VARIABLES:
+            if key in suggestions:
+                continue
+            record = state.parameters.get(key)
+            if record is None or record.role != ParameterRole.DESIGN_VARIABLE:
+                continue
+            if record.status not in {
+                ParameterStatus.PROVIDED,
+                ParameterStatus.CONFIRMED,
+                ParameterStatus.SUGGESTED,
+            }:
+                continue
+            if record.value is None:
+                continue
+            if record.status == ParameterStatus.PROVIDED and not record.verified_source_ref:
+                continue
+            if record.status == ParameterStatus.CONFIRMED and not record.confirmed_by:
+                continue
+            self.parameters.validate_record(key, record)
+            suggestions[key] = {
+                "value": record.value,
+                "unit": record.unit,
+                "source_ref": record.verified_source_ref or record.source_ref,
+                "rule_ref": None,
+            }
+        unresolved = missing_design_variables(
+            {
+                key: ParameterRecord(
+                    value=item["value"], unit=item["unit"],
+                    role=ParameterRole.DESIGN_VARIABLE, status=ParameterStatus.SUGGESTED,
+                )
+                for key, item in suggestions.items()
+            },
+            {},
+            registry=self.parameters,
+        )
         return CandidateProposal(
             proposal_id=engineering_digest(state)[:16],
-            status="PARTIAL" if suggestions else "INSUFFICIENT_RULES",
+            status=(
+                "COMPLETE" if suggestions and not unresolved
+                else "PARTIAL" if suggestions
+                else "INSUFFICIENT_RULES"
+            ),
             parameters=suggestions,
             unresolved_parameters=unresolved,
             evidence_refs=sorted(set(refs)),
