@@ -4,6 +4,7 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from bearing_agents.core.dependency_tracker import InvalidationResult, invalidate_dependents
+from bearing_agents.domain.candidate_lifecycle import missing_design_variables
 from bearing_agents.core.readiness import (
     ReadinessResult,
     StageRequirementRegistry,
@@ -21,7 +22,7 @@ from bearing_agents.domain.agent_protocols import (
     StatePatch,
     StateRepository,
 )
-from bearing_agents.domain.candidates import CandidateDesign
+from bearing_agents.domain.candidates import CandidateDesign, CandidatePrecheckReport
 from bearing_agents.domain.constraints import ConstraintRecord
 from bearing_agents.domain.enums import (
     ConfirmationStatus,
@@ -270,6 +271,146 @@ class StateManager:
             self._validate_state(updated), expected_version, intent, receipt,
         )
 
+    def commit_candidate_task(
+        self,
+        design_id: str,
+        expected_version: int,
+        command: TaskCommand,
+        candidate: CandidateDesign,
+        *,
+        context: WriteContext,
+    ) -> TaskReceipt:
+        """Atomically persist a pending partial candidate and complete its task."""
+        context = WriteContext.model_validate(context.model_dump())
+        if context.kind != WriterKind.SYSTEM:
+            raise StateManagerError("Candidate task commit requires trusted SYSTEM context")
+        command = TaskCommand.model_validate(command.model_dump())
+        candidate = CandidateDesign.model_validate(candidate.model_dump())
+        if (command.kind != "complete" or command.task is not None
+            or command.expected_input_digest is None
+            or command.operation_id != f"{command.task_id}:complete"):
+            raise StateManagerError("Invalid candidate completion command")
+        candidate_ref = f"candidate:{candidate.candidate_id}@{candidate.version}"
+        if command.output_ref != candidate_ref:
+            raise StateManagerError("Candidate output reference mismatch")
+        intent = fingerprint({
+            "command": command.model_dump(mode="json"),
+            "candidate": candidate.model_dump(mode="json"),
+            "writer_kind": context.kind.value,
+            "actor": context.actor,
+        })
+        prior = self.repository.get_task_operation(command.operation_id, design_id, intent)
+        if prior is not None:
+            return prior
+        current = self.get_design(design_id)
+        if current.state_version != expected_version:
+            raise VersionConflictError("Stale candidate task version")
+        if engineering_digest(current) != command.expected_input_digest:
+            raise VersionConflictError("Candidate inputs changed before commit")
+        task = next((t for t in current.task_plan if t.id == command.task_id), None)
+        if (task is None or task.action != "generate_candidate"
+            or task.status != TaskStatus.RUNNING):
+            raise StateManagerError("No matching RUNNING design task")
+        updated = current.model_copy(deep=True)
+        self._append_candidates(updated, [candidate], context)
+        for index, current_task in enumerate(updated.task_plan):
+            if current_task.id == command.task_id:
+                updated.task_plan[index] = current_task.model_copy(update={
+                    "status": TaskStatus.COMPLETED,
+                    "output_ref": candidate_ref,
+                })
+                break
+        updated.state_version = expected_version + 1
+        event = StateEvent(
+            design_id=design_id,
+            from_version=expected_version,
+            to_version=updated.state_version,
+            changed_fields=["candidate_designs", "task_plan"],
+            source="orchestration",
+            actor=context.actor,
+            details={
+                "operation_id": command.operation_id,
+                "task_id": command.task_id,
+                "task_command": "complete",
+                "input_digest": command.expected_input_digest,
+                "output_ref": candidate_ref,
+                "writer_kind": context.kind.value,
+                "candidate_version": candidate.version,
+            },
+        )
+        updated.event_history.append(event)
+        receipt = TaskReceipt(
+            operation_id=command.operation_id, design_id=design_id,
+            task_id=command.task_id, state_version=updated.state_version,
+            event_id=event.event_id,
+        )
+        return self.repository.commit_task(
+            self._validate_state(updated), expected_version, intent, receipt
+        )
+
+    def record_candidate_precheck(
+        self,
+        design_id: str,
+        expected_version: int,
+        report: CandidatePrecheckReport,
+        *,
+        context: WriteContext,
+    ) -> DesignState:
+        """Persist an independently computed assessment, never a model's claimed PASS."""
+        context = WriteContext.model_validate(context.model_dump())
+        if context.kind != WriterKind.SYSTEM:
+            raise StateManagerError("Precheck persistence requires trusted SYSTEM context")
+        report = CandidatePrecheckReport.model_validate(report.model_dump())
+        current = self.get_design(design_id)
+        if current.state_version != expected_version:
+            raise VersionConflictError("Precheck references a stale state version")
+        if report.input_digest != engineering_digest(current):
+            raise VersionConflictError("Precheck inputs changed")
+        candidate = next(
+            (item for item in current.candidate_designs
+             if item.candidate_id == report.candidate_id
+             and item.version == report.candidate_version),
+            None,
+        )
+        if candidate is None or candidate.precheck_status == PrecheckStatus.STALE:
+            raise StateManagerError("Missing or stale candidate version")
+        if report.rule_set_version != current.knowledge_rule_set_version:
+            raise StateManagerError("Precheck rule set is stale")
+        missing = missing_design_variables(
+            candidate.parameters, current.parameters, registry=self.parameter_registry
+        )
+        if report.status == PrecheckStatus.PRECHECK_PASS and (
+            missing or report.missing_parameters or report.uncovered_rules
+            or not report.checks
+            or any(check.get("status") != "PASS" for check in report.checks)
+        ):
+            raise StateManagerError("Incomplete or uncovered candidate cannot PASS")
+        updated = current.model_copy(deep=True)
+        for index, item in enumerate(updated.candidate_designs):
+            if item.candidate_id == candidate.candidate_id and item.version == candidate.version:
+                updated.candidate_designs[index] = item.model_copy(update={
+                    "precheck_status": report.status,
+                    "precheck_report": report,
+                })
+                break
+        updated.state_version += 1
+        updated.event_history.append(StateEvent(
+            design_id=design_id, from_version=expected_version,
+            to_version=updated.state_version,
+            changed_fields=["candidate_precheck"], source="validation",
+            actor=context.actor,
+            details={
+                "candidate_ref": f"candidate:{candidate.candidate_id}@{candidate.version}",
+                "precheck_status": report.status.value,
+                "input_digest": report.input_digest,
+                "rule_set_version": report.rule_set_version,
+                "uncovered_rules": report.uncovered_rules,
+            },
+        ))
+        updated = self._validate_state(updated)
+        self.repository.save(updated, expected_version)
+        return updated
+
     def _apply_constraint_changes(
         self, updated: DesignState, constraints: list[ConstraintRecord],
         context: WriteContext, changed: set[str],
@@ -403,7 +544,7 @@ class StateManager:
             if (candidate.confirmation_status != ConfirmationStatus.PENDING
                 or candidate.precheck_status != PrecheckStatus.NOT_EVALUATED
                 or candidate.simulation_status != SimulationStatus.NOT_REQUESTED
-                or candidate.precheck_history):
+                or candidate.precheck_history or candidate.precheck_report is not None):
                 raise StateManagerError(
                     "New candidates must start PENDING, NOT_EVALUATED, and NOT_REQUESTED"
                 )
@@ -411,10 +552,35 @@ class StateManager:
                 violation = candidate_parameter_violation(record, context.kind)
                 if violation:
                     raise StateManagerError(f"Candidate parameter {parameter_id!r}: {violation}")
-            if any(existing.candidate_id == candidate.candidate_id
-                   and existing.version == candidate.version
-                   for existing in updated.candidate_designs):
-                raise StateManagerError("Duplicate candidate version")
+            for parameter_id, record in candidate.parameters.items():
+                if record.role != ParameterRole.DESIGN_VARIABLE:
+                    raise StateManagerError("Candidate can contain only DESIGN_VARIABLE values")
+                try:
+                    self.parameter_registry.validate_record(parameter_id, record)
+                except ParameterSchemaError as exc:
+                    raise StateManagerError(str(exc)) from exc
+            known_versions = [
+                item.version for item in updated.candidate_designs
+                if item.candidate_id == candidate.candidate_id
+            ]
+            if known_versions and candidate.version != max(known_versions) + 1:
+                raise StateManagerError("Candidate versions must advance monotonically")
+            if not known_versions and candidate.version != 1:
+                raise StateManagerError("The first candidate version must be 1")
+            if candidate.parent_candidate_id is not None and not any(
+                item.candidate_id == candidate.parent_candidate_id
+                for item in updated.candidate_designs
+            ):
+                raise StateManagerError("Unknown parent candidate")
+            missing = missing_design_variables(
+                candidate.parameters, updated.parameters, registry=self.parameter_registry
+            )
+            if candidate.completeness_status == "COMPLETE" and missing:
+                raise StateManagerError("Incomplete candidate cannot claim COMPLETE status")
+            candidate = candidate.model_copy(update={
+                "unresolved_parameters": missing,
+                "completeness_status": "PARTIAL" if missing else "COMPLETE",
+            })
             updated.candidate_designs.append(
                 _snapshot_candidate_dependencies(candidate, updated)
             )
