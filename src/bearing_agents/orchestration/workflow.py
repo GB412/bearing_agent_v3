@@ -10,8 +10,10 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
 from bearing_agents.core.readiness import readiness_for
+from bearing_agents.design.agent import DesignAgent
 from bearing_agents.core.state_manager import StateManager, StateManagerError, VersionConflictError
 from bearing_agents.domain.agent_protocols import PlanDecision, TaskRecord
+from bearing_agents.domain.tasks import TaskReceipt
 from bearing_agents.domain.enums import TaskStatus
 from bearing_agents.domain.tasks import TaskCommand, engineering_digest, fingerprint
 from bearing_agents.domain.write_context import WriteContext, WriterKind
@@ -316,8 +318,20 @@ class Runtime:
         prior = next((e for e in domain.event_history if e.details.get("operation_id")
                       == f"{state['current_task_id']}:complete"), None)
         if prior:
-            receipt = self._task_command(state, "complete",
-                                         output_ref=f"demo:{state['current_task_id']}")
+            if str(prior.details.get("output_ref", "")).startswith("candidate:"):
+                receipt = TaskReceipt(
+                    operation_id=prior.details["operation_id"],
+                    design_id=state["design_id"],
+                    task_id=state["current_task_id"],
+                    state_version=prior.to_version,
+                    event_id=prior.event_id,
+                    replayed=True,
+                )
+            else:
+                receipt = self._task_command(
+                    state, "complete",
+                    output_ref=f"demo:{state['current_task_id']}",
+                )
             return self._completed(state, domain, receipt)
         waited = any(e.details.get("operation_id") == f"{state['current_task_id']}:wait"
                      for e in domain.event_history)
@@ -350,7 +364,14 @@ class Runtime:
             task = next(t for t in domain.task_plan if t.id == state["current_task_id"])
             result = self.agents[state["executor"]].run(domain.model_copy(deep=True),
                                                         task.model_copy(deep=True))
-            validate_result(result, task.id)
+            validate_result(
+                result,
+                task.id,
+                allow_candidate_additions=(
+                    state["action"] == "generate_candidate"
+                    and type(self.agents[state["executor"]]) is DesignAgent
+                ),
+            )
             public_outputs = [
                 item if isinstance(item, dict) else str(item)
                 for item in result.issues[:8]
@@ -384,10 +405,28 @@ class Runtime:
             if not self._completion_still_allowed(state, current):
                 break
             try:
-                receipt = self._task_command(
-                    state, "complete", output_ref=f"demo:{task.id}",
-                    expected_version=current.state_version,
-                )
+                if result.state_patch is not None:
+                    candidate = result.state_patch.candidate_additions[0]
+                    command = TaskCommand(
+                        operation_id=f"{task.id}:complete",
+                        task_id=task.id,
+                        kind="complete",
+                        reason="Candidate committed through trusted runtime",
+                        expected_input_digest=state["input_digest"],
+                        output_ref=f"candidate:{candidate.candidate_id}@{candidate.version}",
+                    )
+                    receipt = self.manager.commit_candidate_task(
+                        state["design_id"],
+                        current.state_version,
+                        command,
+                        candidate,
+                        context=SYSTEM,
+                    )
+                else:
+                    receipt = self._task_command(
+                        state, "complete", output_ref=f"demo:{task.id}",
+                        expected_version=current.state_version,
+                    )
                 break
             except (VersionConflictError, StateConflictError):
                 continue
@@ -475,6 +514,23 @@ class Runtime:
                 raise PermissionError("Confirmation request has no pending interruption")
             reason = "GOAL_REACHED" if accepted else "USER_REJECTED"
             return dict(snapshot.values, duplicate=True, termination_reason=reason)
+        # A task acknowledgement is NOT a candidate confirmation.
+        # Incomplete/unvalidated candidates cannot be implicitly accepted.
+        if accepted and str(request["target_ref"]).startswith("candidate:"):
+            candidate = next(
+                (
+                    item for item in domain.candidate_designs
+                    if f"candidate:{item.candidate_id}@{item.version}" == request["target_ref"]
+                ),
+                None,
+            )
+            if (candidate is not None
+                and engineering_digest(domain) == request["input_digest"]
+                and (
+                    candidate.completeness_status != "COMPLETE"
+                    or candidate.precheck_status.value != "PRECHECK_PASS"
+                )):
+                raise PermissionError("Incomplete or unvalidated candidate cannot be confirmed")
         # StateManager looks up receipts BEFORE CAS/freshness. Duplicate processed requests
         # still resolve to the old result even if newer domain data exists.
         try:
