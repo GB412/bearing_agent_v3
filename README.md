@@ -4,8 +4,10 @@ PR-01 domain foundation, PR-02 controlled LangGraph runtime and PR-03 trusted
 multi-turn requirements gathering for a cylindrical radial hydrodynamic journal
 bearing design assistant. FakePlanner/FakeAgent demonstrate
 safe workflow execution. Real LLM planning is opt-in; the default execution stays
-fully offline. The project does not load engineering limits, recommend bearing
-geometry/materials, perform formal prechecks, or connect DLAP.
+fully offline. PR-04 adds a draft-aware source index, deterministic rule/table repositories and an
+execution interface. The default knowledge set contains no active standard numerical
+limits and does not recommend bearing geometry/materials, perform candidate prechecks,
+or connect DLAP.
 
 ## Requirements
 
@@ -162,3 +164,21 @@ and reports **interface validation separately from planner oracle accuracy**.
 fixtures; `planning_acceptance` reports the independent small-sample ≥85%
 prototype reference threshold. Neither implies engineering validation.
 See `docs/pr02b_acceptance.md` for reproducibility and known limitations.
+
+
+## PR-04 professional knowledge and rule services
+
+The default knowledge base indexes the user-supplied GB/T 21466.1/.2/.3-2024 draft
+documents and their ISO 7902:2020 references. It stores source metadata and short
+section summaries, not copied standard text or numerical tables. Draft rules and
+tables remain DRAFT_EXTRACTED; they cannot produce formal recommendations or PASS
+results before source verification and expert approval.
+
+Run the PR-04 demo with: python examples/pr04_knowledge_demo.py
+Run focused tests with: python -m pytest -q tests/knowledge tests/rules
+
+The knowledge search is deterministic lexical retrieval, not a vector RAG service.
+RuleEngine evaluates only ACTIVE rules with verified source versions. User
+constraints are evaluated separately from standard-derived engineering rules.
+Table lookup requires explicit units and non-overlapping ranges; interpolation and
+extrapolation are not performed. See docs/pr04_acceptance.md.

@@ -1,11 +1,12 @@
 from typing import TYPE_CHECKING, Any, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from bearing_agents.domain.candidates import CandidateDesign
 from bearing_agents.domain.constraints import ConstraintRecord
 from bearing_agents.domain.enums import (
     AgentResultStatus,
+    ConstraintOperator,
     ParameterRole,
     RuleStatus,
     TaskStatus,
@@ -99,18 +100,54 @@ class AgentResult(BaseModel):
 
 
 class RuleRecord(BaseModel):
+    """Versioned engineering-rule metadata and executable operation contract."""
+
     model_config = ConfigDict(extra="forbid")
 
     rule_id: str
     source_document: str
+    source_version: str | None = None
     section: str
+    page: str | None = None
     scope: str
+    bearing_scope: str | None = None
+    operating_scope: str | None = None
     inputs: list[str] = Field(default_factory=list)
+    units: dict[str, str] = Field(default_factory=dict)
     operation: str
+    operator: ConstraintOperator | None = None
+    target: Any = None
+    target_unit: str | None = None
+    table_ref: str | None = None
+    exceptions: list[str] = Field(default_factory=list)
     status: RuleStatus
     version: str
     reviewer: str | None = None
     tests: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_active_rule(self) -> "RuleRecord":
+        if self.status != RuleStatus.ACTIVE:
+            return self
+        if not self.source_version:
+            raise ValueError("An active rule requires an exact source version")
+        if not self.reviewer or not self.reviewer.strip():
+            raise ValueError("An active rule requires an expert reviewer")
+        if self.operation == "PARAMETER_COMPARE":
+            if len(self.inputs) != 1 or self.operator is None or self.target is None:
+                raise ValueError(
+                    "An active comparison rule requires one input, operator and target"
+                )
+            if isinstance(self.target, (int, float)) and self.target_unit is None:
+                raise ValueError("An active numeric comparison rule requires a target unit")
+        elif self.operation == "TABLE_LOOKUP":
+            if not self.table_ref or not self.inputs:
+                raise ValueError(
+                    "An active table lookup rule requires a table reference and inputs"
+                )
+        else:
+            raise ValueError(f"Unsupported active rule operation: {self.operation}")
+        return self
 
 
 class StateRepository(Protocol):
