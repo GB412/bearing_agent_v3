@@ -350,7 +350,32 @@ class Runtime:
             task = next(t for t in domain.task_plan if t.id == state["current_task_id"])
             result = self.agents[state["executor"]].run(domain.model_copy(deep=True),
                                                         task.model_copy(deep=True))
-            validate_result(result, task.id)
+            validate_result(
+                result, task.id,
+                allow_candidate_additions=state["action"] == "generate_candidate",
+            )
+            if result.state_patch is not None:
+                current = self.manager.get_design(state["design_id"])
+                for candidate in result.state_patch.candidate_additions:
+                    existing = next(
+                        (item for item in current.candidate_designs
+                         if item.candidate_id == candidate.candidate_id
+                         and item.version == candidate.version),
+                        None,
+                    )
+                    if existing is not None:
+                        if existing.parameters != candidate.parameters:
+                            raise StateManagerError("Candidate replay content mismatch")
+                        continue
+                    if not self._completion_still_allowed(state, current):
+                        raise StateConflictError("Candidate inputs changed before commit")
+                    current = self.manager.apply_patch(
+                        current.design_id,
+                        current.state_version,
+                        result.state_patch,
+                        context=WriteContext(kind=WriterKind.AGENT, actor=state["executor"]),
+                    )
+                domain = self.manager.get_design(state["design_id"])
             public_outputs = [
                 item if isinstance(item, dict) else str(item)
                 for item in result.issues[:8]
