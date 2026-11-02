@@ -15,13 +15,13 @@ from bearing_agents.core.write_guards import (
     candidate_parameter_violation,
     proposed_parameter_violation,
 )
-from bearing_agents.domain.candidate_lifecycle import missing_design_variables
 from bearing_agents.domain.agent_protocols import (
     ConfirmationEvent,
     RoleChange,
     StatePatch,
     StateRepository,
 )
+from bearing_agents.domain.candidate_lifecycle import missing_design_variables
 from bearing_agents.domain.candidates import CandidateDesign, CandidatePrecheckReport
 from bearing_agents.domain.constraints import ConstraintRecord
 from bearing_agents.domain.enums import (
