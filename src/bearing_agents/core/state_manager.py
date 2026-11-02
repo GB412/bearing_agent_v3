@@ -4,7 +4,6 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from bearing_agents.core.dependency_tracker import InvalidationResult, invalidate_dependents
-from bearing_agents.domain.candidate_lifecycle import missing_design_variables
 from bearing_agents.core.readiness import (
     ReadinessResult,
     StageRequirementRegistry,
@@ -16,6 +15,7 @@ from bearing_agents.core.write_guards import (
     candidate_parameter_violation,
     proposed_parameter_violation,
 )
+from bearing_agents.domain.candidate_lifecycle import missing_design_variables
 from bearing_agents.domain.agent_protocols import (
     ConfirmationEvent,
     RoleChange,
