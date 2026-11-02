@@ -64,9 +64,9 @@ class TableRepository:
                 raise ValueError(f"Unknown source for table: {table.table_id}")
             if source.version != table.source_version:
                 raise ValueError(f"Source version mismatch for table: {table.table_id}")
-            for unit in table.input_units.values():
+            for unit in (*table.input_units.values(), *table.output_units.values()):
                 if unit not in UNITS:
-                    raise ValueError(f"Unknown table input unit: {unit}")
+                    raise ValueError(f"Unknown table unit: {unit}")
             self._tables[table.table_id] = table
         payload = [
             table.model_dump(mode="json")
