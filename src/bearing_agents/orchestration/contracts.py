@@ -247,13 +247,26 @@ class FakeAgent:
         return AgentResult(task_id=task.id, status=AgentResultStatus.SUCCESS, issues=[summary])
 
 
-def validate_result(result: AgentResult, task_id: str) -> AgentResult:
+def validate_result(
+    result: AgentResult,
+    task_id: str,
+    *,
+    allow_candidate_additions: bool = False,
+) -> AgentResult:
     result = AgentResult.model_validate(result.model_dump())
     if result.task_id != task_id:
         raise ValueError("RESULT_TASK_MISMATCH")
     if result.state_patch is not None:
-        # This PR intentionally grants FakeAgent no engineering effects at all.
-        raise ValueError("DOMAIN_PATCH_NOT_ALLOWED")
+        patch = result.state_patch
+        if not allow_candidate_additions or len(patch.candidate_additions) != 1:
+            raise ValueError("DOMAIN_PATCH_NOT_ALLOWED")
+        if patch.source != "design_agent" or patch.actor is not None:
+            raise ValueError("CANDIDATE_PATCH_SOURCE_MISMATCH")
+        for field, value in patch.model_dump().items():
+            if field not in {"candidate_additions", "source", "actor"} and value not in (
+                None, [], {},
+            ):
+                raise ValueError("CANDIDATE_PATCH_CONTAINS_FORBIDDEN_EFFECTS")
     if result.status == AgentResultStatus.FAILED:
         raise ValueError("AGENT_FAILED")
     return result
