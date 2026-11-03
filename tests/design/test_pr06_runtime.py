@@ -67,3 +67,91 @@ def test_partial_candidate_commits_atomically_and_is_not_approved(
                 accepted=True,
                 context=WriteContext(kind=WriterKind.USER, actor="designer"),
             )
+
+
+def test_candidate_proposal_effect_is_not_tied_to_design_agent_python_type(
+    manager, ready, tmp_path,
+):
+    current = manager.apply_patch(
+        ready.design_id,
+        ready.state_version,
+        {"source": "trusted-user", "parameter_changes": {
+            "bearing_width": ParameterRecord(
+                value=60, unit="mm", role=ParameterRole.DESIGN_VARIABLE,
+                status=ParameterStatus.PROVIDED,
+            ),
+        }},
+        context=WriteContext(
+            kind=WriterKind.USER,
+            actor="trusted-user",
+            verified_parameter_refs={"bearing_width": "user-message-width"},
+        ),
+    )
+    delegate = DesignAgent()
+
+    class WrappedDesignExecutor:
+        def run(self, state, task):
+            return delegate.run(state, task)
+
+    with open_runtime(
+        manager,
+        tmp_path / "wrapped-agent-checkpoint.sqlite",
+        agents={
+            "conditions_fake": delegate,
+            "design_fake": WrappedDesignExecutor(),
+        },
+    ) as runtime:
+        result = runtime.invoke(current.design_id)
+
+    saved = manager.get_design(current.design_id)
+    assert result["termination_reason"] == "NEEDS_REVIEW"
+    assert len(saved.candidate_designs) == 1
+    assert saved.candidate_designs[0].completeness_status == "PARTIAL"
+
+
+def test_validation_agent_is_schedulable_through_the_same_runtime(
+    manager, ready, tmp_path,
+):
+    current = manager.apply_patch(
+        ready.design_id,
+        ready.state_version,
+        {"source": "trusted-user", "parameter_changes": {
+            "bearing_width": ParameterRecord(
+                value=60, unit="mm", role=ParameterRole.DESIGN_VARIABLE,
+                status=ParameterStatus.PROVIDED,
+            ),
+        }},
+        context=WriteContext(
+            kind=WriterKind.USER,
+            actor="trusted-user",
+            verified_parameter_refs={"bearing_width": "user-message-width"},
+        ),
+    )
+    design_agent = DesignAgent()
+    validation_agent = ValidationAgent()
+
+    with open_runtime(
+        manager,
+        tmp_path / "validation-agent-checkpoint.sqlite",
+        agents={
+            "conditions_fake": design_agent,
+            "design_fake": design_agent,
+            "validation_agent": validation_agent,
+        },
+    ) as runtime:
+        generated = runtime.invoke(current.design_id)
+        candidate = manager.get_design(current.design_id).candidate_designs[-1]
+        before = manager.get_design(current.design_id)
+        checked = runtime.invoke(
+            current.design_id,
+            goal="precheck",
+            target_ref=f"candidate:{candidate.candidate_id}@{candidate.version}",
+        )
+
+    assert generated["termination_reason"] == "NEEDS_REVIEW"
+    assert checked["termination_reason"] == "NEEDS_REVIEW"
+    report = checked["agent_outputs"][-1]
+    assert report["status"] == "REVIEW_REQUIRED"
+    after = manager.get_design(current.design_id)
+    assert after.parameters == before.parameters
+    assert after.candidate_designs == before.candidate_designs
