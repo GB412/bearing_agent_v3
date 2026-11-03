@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from bearing_agents.core.state_manager import StateManager
-from bearing_agents.domain.candidates import CandidatePrecheckReport
 from bearing_agents.design.agent import DesignAgent
+from bearing_agents.domain.candidates import CandidatePrecheckReport
 from bearing_agents.knowledge.defaults import KnowledgeBase
 from bearing_agents.orchestration.registry import AgentRegistry, ToolRegistry
 from bearing_agents.orchestration.workflow import Runtime, open_runtime
