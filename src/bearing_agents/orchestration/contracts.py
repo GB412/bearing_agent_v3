@@ -178,6 +178,12 @@ def task_plan_view(state: DesignState) -> dict:
 
 
 class FakePlanner:
+    def __init__(self, catalog: dict[str, ActionSpec] | None = None):
+        self.catalog = dict(CATALOG if catalog is None else catalog)
+
+    def bind_catalog(self, catalog: dict[str, ActionSpec]) -> None:
+        self.catalog = dict(catalog)
+
     def plan(self, summary: StateSummary) -> PlanDecision:
         if summary.goal == "simulation":
             action = "simulation_unavailable"
@@ -205,7 +211,7 @@ class FakePlanner:
         else:
             action = "produce_summary"
         return PlanDecision(
-            action=action, selected_agent=CATALOG[action].executor_id,
+            action=action, selected_agent=self.catalog[action].executor_id,
             rationale=f"State-driven offline {action}; missing={summary.missing_inputs}",
             expected_result="DEMO_ONLY workflow information, not engineering validation",
             requires_confirmation=action == "request_confirmation",
