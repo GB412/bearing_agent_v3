@@ -1,4 +1,4 @@
-from bearing_agents.core.readiness import readiness_for
+from bearing_agents.core.readiness import StageRequirementRegistry, readiness_for
 from bearing_agents.design.contracts import CandidateProposal, ConditionAnalysis, DesignStrategy
 from bearing_agents.domain.agent_protocols import AgentResult, StatePatch, TaskRecord
 from bearing_agents.domain.candidate_lifecycle import missing_design_variables
@@ -30,9 +30,11 @@ class DesignAgent:
         self,
         knowledge: KnowledgeBase | None = None,
         parameter_registry: ParameterSchemaRegistry | None = None,
+        stage_registry: StageRequirementRegistry | None = None,
     ):
         self.knowledge = knowledge or build_default_knowledge_base()
         self.parameters = parameter_registry or ParameterSchemaRegistry()
+        self.stage_registry = stage_registry
         self.rule_engine = RuleEngine(
             self.knowledge.rules,
             self.knowledge.sources,
@@ -81,7 +83,9 @@ class DesignAgent:
         raise ValueError(f"DesignAgent does not support action: {task.action}")
 
     def analyze_conditions(self, state: DesignState) -> ConditionAnalysis:
-        gate = readiness_for(state, "R2", parameter_registry=self.parameters)
+        gate = readiness_for(
+            state, "R2", self.stage_registry, parameter_registry=self.parameters,
+        )
         if state.target_scope != "cylindrical_radial_hydrodynamic":
             return ConditionAnalysis(
                 status="UNSUPPORTED_SCOPE",
