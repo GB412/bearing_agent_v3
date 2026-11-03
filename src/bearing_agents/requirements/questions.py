@@ -13,7 +13,7 @@ def build_view(
     def ask(code, message):
         if len(questions)<3 and code not in {q.reason_code for q in questions}:
             questions.append(Question(
-                question_id=f"{design_id}:{state.state_version}:{code}",
+                question_id=f"{state.design_id}:{state.state_version}:{code}",
                 reason_code=code,text=message,
             ))
     if state.target_scope=="unknown":
