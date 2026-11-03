@@ -16,6 +16,7 @@ from bearing_agents.requirements.agent import RequirementsAgent
 from bearing_agents.requirements.contracts import InteractionReceipt, RequirementSpecView
 from bearing_agents.requirements.interaction import InteractionService
 from bearing_agents.validation.agent import ValidationAgent
+from bearing_agents.validation.service import ValidationService
 
 
 @dataclass(frozen=True)
@@ -37,10 +38,12 @@ class BearingDesignApplication:
         *,
         actor: str,
         extractor=None,
+        validation_service: ValidationService | None = None,
     ):
         self.manager = manager
         self.runtime = runtime
         self.interaction = InteractionService(manager, actor=actor, extractor=extractor)
+        self.validation_service = validation_service or ValidationService(manager)
 
     def create_design(self, goal: str | None = None):
         return self.interaction.create_design(goal)
@@ -67,10 +70,24 @@ class BearingDesignApplication:
         )
 
     def precheck_candidate(self, design_id: str, candidate_ref: str) -> dict[str, Any]:
-        """Run the registered deterministic precheck for one exact candidate version."""
-        return self.runtime.invoke(
+        """Run and persist a deterministic precheck for one exact candidate version."""
+        execution = self.runtime.invoke(
             design_id, goal="precheck", target_ref=candidate_ref,
         )
+        outputs = execution.get("agent_outputs", [])
+        if not outputs:
+            raise ValueError(
+                f"Precheck did not produce a report: {execution.get('termination_reason')}"
+            )
+        from bearing_agents.domain.candidates import CandidatePrecheckReport
+
+        report = CandidatePrecheckReport.model_validate(outputs[-1])
+        self.validation_service.persist_report(design_id, report)
+        return {
+            "execution": execution,
+            "report": report,
+            "state_version": self.manager.get_design(design_id).state_version,
+        }
 
     def recover(self, design_id: str) -> dict[str, Any]:
         return self.runtime.recover(design_id)
@@ -139,5 +156,9 @@ def open_application(
         **runtime_options,
     ) as runtime:
         yield BearingDesignApplication(
-            manager, runtime, actor=actor, extractor=extractor,
+            manager,
+            runtime,
+            actor=actor,
+            extractor=extractor,
+            validation_service=ValidationService(manager),
         )
