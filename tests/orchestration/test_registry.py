@@ -215,6 +215,7 @@ def test_new_test_profile_runs_without_changing_supervisor_nodes(tmp_path):
         "profile_summary": ActionSpec(
             executor_id="profile_agent",
             supported_scopes=("test_bearing_profile",),
+            terminal=True,
         )
     }
     with open_runtime(
