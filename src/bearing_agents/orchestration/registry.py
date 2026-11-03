@@ -68,7 +68,11 @@ class ToolSpec:
 
 
 class ToolRegistry:
-    """Explicit allowlist of in-process, read-only tools; no dynamic code loading."""
+    """Allowlist of trusted in-process handlers; this is not a Python sandbox.
+
+    Register reviewed, read-only handlers only. Tool code is trusted application
+    code and must not write engineering state or manufacture user authority.
+    """
 
     def __init__(self, specs: Iterable[ToolSpec] = ()):
         self._specs: dict[str, ToolSpec] = {}
