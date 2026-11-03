@@ -99,7 +99,7 @@ def test_action_scope_is_declared_by_the_catalog_not_supervisor_code(ready):
     catalog = {
         "test_diagnostic": ActionSpec(
             executor_id="diagnostic_agent",
-            required_gate=None,
+            required_gate="R2",
             supported_scopes=("test_bearing_profile",),
         )
     }
