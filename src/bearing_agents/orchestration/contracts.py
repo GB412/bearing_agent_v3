@@ -281,7 +281,14 @@ def validate_result(
     *,
     effect_class: str = "READ_ONLY",
     candidate_source: str | None = None,
+    allow_candidate_additions: bool | None = None,
 ) -> AgentResult:
+    # Keep the PR-02 helper argument readable for existing callers; Runtime
+    # now derives proposal permission exclusively from the trusted ActionSpec.
+    if allow_candidate_additions is not None:
+        effect_class = "CANDIDATE_PROPOSAL" if allow_candidate_additions else "READ_ONLY"
+        if allow_candidate_additions and candidate_source is None:
+            candidate_source = "design_agent"
     result = AgentResult.model_validate(result.model_dump())
     if result.task_id != task_id:
         raise ValueError("RESULT_TASK_MISMATCH")
