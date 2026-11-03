@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from bearing_agents.core.readiness import readiness_for
+from bearing_agents.core.readiness import StageRequirementRegistry, readiness_for
 from bearing_agents.domain.agent_protocols import AgentResult, TaskRecord
 from bearing_agents.domain.candidate_lifecycle import missing_design_variables
 from bearing_agents.domain.candidates import CandidateDesign, CandidatePrecheckReport
@@ -12,6 +12,7 @@ from bearing_agents.domain.enums import (
     PrecheckStatus,
     RuleStatus,
 )
+from bearing_agents.domain.parameter_registry import ParameterSchemaRegistry
 from bearing_agents.domain.state import DesignState
 from bearing_agents.orchestration.registry import AgentContext
 from bearing_agents.domain.tasks import engineering_digest
@@ -45,13 +46,18 @@ class ValidationAgent:
         knowledge: KnowledgeBase | None = None,
         *,
         coverage: RuleCoverageSpec | None = None,
+        stage_registry: StageRequirementRegistry | None = None,
+        parameter_registry: ParameterSchemaRegistry | None = None,
     ):
         self.knowledge = knowledge or build_default_knowledge_base()
         self.coverage = coverage or RuleCoverageSpec()
+        self.stage_registry = stage_registry
+        self.parameter_registry = parameter_registry or ParameterSchemaRegistry()
         self.rules = RuleEngine(
             self.knowledge.rules,
             self.knowledge.sources,
             tables=self.knowledge.tables,
+            parameter_registry=self.parameter_registry,
         )
 
     def run(
@@ -112,7 +118,9 @@ class ValidationAgent:
         hard_fail = False
         invalid = False
 
-        gate = readiness_for(state, "R2")
+        gate = readiness_for(
+            state, "R2", self.stage_registry, parameter_registry=self.parameter_registry,
+        )
         if not gate.ready:
             issues.append("R2 requirements are not ready")
             issues.extend(gate.conflicts)
