@@ -129,16 +129,6 @@ def test_runtime_dispatches_registered_agent_and_audits_tool_version(
 ):
     from bearing_agents.orchestration.workflow import open_runtime
 
-    class Planner:
-        def plan(self, summary):
-            return PlanDecision(
-                action="produce_summary",
-                selected_agent="tool_agent",
-                rationale="Use the registered diagnostic executor",
-                expected_result="read-only result",
-                state_version=summary.domain_version,
-            )
-
     class ToolAgent:
         def run(self, state, task, *, context):
             value = context.tools.call("sum_values", left=4, right=5)
@@ -167,7 +157,7 @@ def test_runtime_dispatches_registered_agent_and_audits_tool_version(
         tool_registry=tools,
         catalog=catalog,
     ) as runtime:
-        result = runtime.invoke(ready.design_id)
+        result = runtime.invoke(ready.design_id, goal="summary")
 
     assert result["termination_reason"] == "GOAL_REACHED"
     committed = next(row for row in result["trace"] if row["stage"] == "committed")
@@ -191,6 +181,16 @@ def test_new_test_profile_runs_without_changing_supervisor_nodes(tmp_path):
     )
     design = manager.create_design(target_scope="test_bearing_profile")
 
+    class Planner:
+        def plan(self, summary):
+            return PlanDecision(
+                action="profile_diagnostic",
+                selected_agent="profile_agent",
+                rationale="Dispatch the profile-specific registered action",
+                expected_result="test profile result",
+                state_version=summary.domain_version,
+            )
+
     class ProfileAgent:
         def run(self, state, task):
             return AgentResult(
@@ -200,7 +200,7 @@ def test_new_test_profile_runs_without_changing_supervisor_nodes(tmp_path):
             )
 
     catalog = {
-        "produce_summary": ActionSpec(
+        "profile_diagnostic": ActionSpec(
             executor_id="profile_agent",
             supported_scopes=("test_bearing_profile",),
             terminal=True,
@@ -209,6 +209,7 @@ def test_new_test_profile_runs_without_changing_supervisor_nodes(tmp_path):
     with open_runtime(
         manager,
         tmp_path / "profile-checkpoint.sqlite",
+        planner=Planner(),
         agent_registry=AgentRegistry({"profile_agent": ProfileAgent()}),
         catalog=catalog,
     ) as runtime:
