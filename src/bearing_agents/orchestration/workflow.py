@@ -504,9 +504,12 @@ class Runtime:
             reason = "INSUFFICIENT_RULES"
         elif agent_status == "NEEDS_REVIEW":
             reason = "NEEDS_REVIEW"
-        if domain.target_scope not in {"cylindrical_radial_hydrodynamic", "unknown"}:
-            if "*" not in self.catalog[state["action"]].supported_scopes:
-                reason = "UNSUPPORTED_ACTION"
+        action_scopes = self.catalog[state["action"]].supported_scopes
+        if domain.target_scope == "unsupported" or (
+            domain.target_scope not in {"cylindrical_radial_hydrodynamic", "unknown"}
+            and "*" not in action_scopes and domain.target_scope not in action_scopes
+        ):
+            reason = "UNSUPPORTED_ACTION"
         trace_entry = {
             "stage": "committed", "action": state["action"],
             "task_id": state["current_task_id"], "operation_id": receipt.operation_id,
