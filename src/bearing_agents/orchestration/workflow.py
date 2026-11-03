@@ -207,6 +207,10 @@ class Runtime:
                 (name, spec.supported_scopes)
                 for name, spec in sorted(self.catalog.items())
             ),
+            action_terminal_descriptions=tuple(
+                (name, spec.terminal)
+                for name, spec in sorted(self.catalog.items())
+            ),
             recent_failures=tuple(
                 str(row.get("reason") or row.get("error"))
                 for row in state.get("trace", [])
@@ -500,6 +504,8 @@ class Runtime:
             "precheck_candidate": "GOAL_REACHED",
             "simulation_unavailable": "UNSUPPORTED_ACTION",
         }.get(state["action"])
+        if reason is None and self.catalog[state["action"]].terminal:
+            reason = "GOAL_REACHED"
         if agent_status == "INSUFFICIENT_RULES":
             reason = "INSUFFICIENT_RULES"
         elif agent_status == "NEEDS_REVIEW":
