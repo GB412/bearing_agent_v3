@@ -2,7 +2,7 @@ import pytest
 
 from bearing_agents.domain.agent_protocols import AgentResult, PlanDecision
 from bearing_agents.domain.enums import AgentResultStatus
-from bearing_agents.orchestration.contracts import ActionSpec, CATALOG, policy_guard
+from bearing_agents.orchestration.contracts import CATALOG, ActionSpec, policy_guard
 from bearing_agents.orchestration.registry import (
     AgentContext,
     AgentRegistry,
