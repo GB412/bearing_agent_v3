@@ -36,7 +36,9 @@ class InteractionService:
         return self.manager.create_design(user_goal=goal, target_scope="unknown")
 
     def show_state(self, design_id: str):
-        return build_view(self.manager, design_id)
+        state = self.manager.get_design(design_id)
+        gate = self.manager.readiness_for(design_id, "R2")
+        return build_view(state, gate)
 
     def resume_session(self, design_id: str):
         return self.show_state(design_id)
@@ -157,7 +159,9 @@ class InteractionService:
             operation_id=operation_id,design_id=design_id,
             message_id=message.message_id,state_version=committed.state_version,
         )
-        return receipt,build_view(self.manager,design_id,uncertain)
+        latest = self.manager.get_design(design_id)
+        gate = self.manager.readiness_for(design_id, "R2")
+        return receipt, build_view(latest, gate, uncertain)
 
     def correct_parameter(
         self, design_id: str, parameter_id: str, revision: int,
