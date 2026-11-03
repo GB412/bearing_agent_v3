@@ -51,12 +51,13 @@ class ActionSpec:
     version: str = "1"
     supported_scopes: tuple[str, ...] = ("*",)
     candidate_source: str | None = None
+    terminal: bool = False
 
 
 # The catalog is the trusted action registry: the planner may select an entry,
 # but cannot create executors, scopes, permissions, or side-effect classes.
 CATALOG = {
-    "clarify_requirement": ActionSpec("requirements_fake"),
+    "clarify_requirement": ActionSpec("requirements_fake", terminal=True),
     "analyze_conditions": ActionSpec(
         "conditions_fake", required_gate="R2",
         supported_scopes=("cylindrical_radial_hydrodynamic",),
@@ -69,10 +70,11 @@ CATALOG = {
     "precheck_candidate": ActionSpec(
         "validation_agent", required_gate="R2",
         supported_scopes=("cylindrical_radial_hydrodynamic",),
+        terminal=True,
     ),
     "request_confirmation": ActionSpec("confirmation_gateway", effect_class="HUMAN_DECISION"),
-    "produce_summary": ActionSpec("summary_fake"),
-    "simulation_unavailable": ActionSpec("unavailable_stub"),
+    "produce_summary": ActionSpec("summary_fake", terminal=True),
+    "simulation_unavailable": ActionSpec("unavailable_stub", terminal=True),
     "run_simulation": ActionSpec("unavailable_stub", supported=False),
 }
 
@@ -105,6 +107,7 @@ class PlannerContext:
 
     action_descriptions: tuple[tuple[str, str, str | None, bool], ...] = ()
     action_scope_descriptions: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    action_terminal_descriptions: tuple[tuple[str, bool], ...] = ()
     recent_failures: tuple[str, ...] = ()
     # None means the caller did not supply a budget; zero means it is exhausted.
     remaining_steps: int | None = None
