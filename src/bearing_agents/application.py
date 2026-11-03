@@ -109,6 +109,7 @@ def open_application(
     design_agent = DesignAgent(
         knowledge=knowledge,
         parameter_registry=manager.parameter_registry,
+        stage_registry=manager.stage_registry,
     )
     registered = {
         "requirements_fake": RequirementsAgent(
@@ -116,7 +117,11 @@ def open_application(
         ),
         "conditions_fake": design_agent,
         "design_fake": design_agent,
-        "validation_agent": ValidationAgent(knowledge=knowledge),
+        "validation_agent": ValidationAgent(
+            knowledge=knowledge,
+            stage_registry=manager.stage_registry,
+            parameter_registry=manager.parameter_registry,
+        ),
     }
     if agent_registry is not None:
         registered.update(agent_registry.as_dict())
