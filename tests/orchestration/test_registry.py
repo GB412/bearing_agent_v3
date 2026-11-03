@@ -180,3 +180,51 @@ def test_runtime_dispatches_registered_agent_and_audits_tool_version(
     }]
     assert committed["tool_calls"][0]["input_digest"]
     assert committed["tool_calls"][0]["output_digest"]
+
+
+def test_new_test_profile_runs_without_changing_supervisor_nodes(tmp_path):
+    from bearing_agents.core.state_manager import StateManager
+    from bearing_agents.infra.state_repository import SQLiteStateRepository
+    from bearing_agents.orchestration.workflow import open_runtime
+
+    manager = StateManager(
+        SQLiteStateRepository(tmp_path / "profile-domain.sqlite"),
+        supported_scopes={"test_bearing_profile"},
+    )
+    design = manager.create_design(target_scope="test_bearing_profile")
+
+    class Planner:
+        def plan(self, summary):
+            return PlanDecision(
+                action="profile_summary",
+                selected_agent="profile_agent",
+                rationale="Dispatch the profile-specific registered action",
+                expected_result="test profile result",
+                state_version=summary.domain_version,
+            )
+
+    class ProfileAgent:
+        def run(self, state, task):
+            return AgentResult(
+                task_id=task.id,
+                status=AgentResultStatus.SUCCESS,
+                issues=[{"scope": state.target_scope, "profile_test": True}],
+            )
+
+    catalog = {
+        "profile_summary": ActionSpec(
+            executor_id="profile_agent",
+            supported_scopes=("test_bearing_profile",),
+        )
+    }
+    with open_runtime(
+        manager,
+        tmp_path / "profile-checkpoint.sqlite",
+        planner=Planner(),
+        agent_registry=AgentRegistry({"profile_agent": ProfileAgent()}),
+        catalog=catalog,
+    ) as runtime:
+        result = runtime.invoke(design.design_id)
+
+    assert result["termination_reason"] == "GOAL_REACHED"
+    assert result["agent_outputs"] == [{"scope": "test_bearing_profile", "profile_test": True}]
