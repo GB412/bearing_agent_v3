@@ -152,7 +152,6 @@ def test_runtime_dispatches_registered_agent_and_audits_tool_version(
     with open_runtime(
         manager,
         tmp_path / "registry-checkpoint.sqlite",
-        planner=Planner(),
         agent_registry=AgentRegistry({"tool_agent": ToolAgent()}),
         tool_registry=tools,
         catalog=catalog,
