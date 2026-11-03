@@ -1,5 +1,3 @@
-from dataclasses import replace
-
 import pytest
 
 from bearing_agents.domain.agent_protocols import AgentResult, PlanDecision
@@ -124,3 +122,61 @@ def test_action_scope_is_declared_by_the_catalog_not_supervisor_code(ready):
     )
     assert blocked.verdict == "BLOCK"
     assert blocked.reason_code == "UNSUPPORTED_SCOPE"
+
+
+def test_runtime_dispatches_registered_agent_and_audits_tool_version(
+    manager, ready, tmp_path,
+):
+    from bearing_agents.orchestration.workflow import open_runtime
+
+    class Planner:
+        def plan(self, summary):
+            return PlanDecision(
+                action="produce_summary",
+                selected_agent="tool_agent",
+                rationale="Use the registered diagnostic executor",
+                expected_result="read-only result",
+                state_version=summary.domain_version,
+            )
+
+    class ToolAgent:
+        def run(self, state, task, *, context):
+            value = context.tools.call("sum_values", left=4, right=5)
+            return AgentResult(
+                task_id=task.id,
+                status=AgentResultStatus.SUCCESS,
+                issues=[{"value": value}],
+            )
+
+    catalog = dict(CATALOG)
+    catalog["produce_summary"] = ActionSpec(
+        executor_id="tool_agent",
+        supported_scopes=("*",),
+    )
+    tools = ToolRegistry()
+    tools.register(
+        "sum_values", lambda left, right: left + right,
+        allowed_agent_ids={"tool_agent"}, version="3",
+    )
+
+    with open_runtime(
+        manager,
+        tmp_path / "registry-checkpoint.sqlite",
+        planner=Planner(),
+        agent_registry=AgentRegistry({"tool_agent": ToolAgent()}),
+        tool_registry=tools,
+        catalog=catalog,
+    ) as runtime:
+        result = runtime.invoke(ready.design_id)
+
+    assert result["termination_reason"] == "GOAL_REACHED"
+    committed = next(row for row in result["trace"] if row["stage"] == "committed")
+    assert committed["tool_calls"] == [{
+        "tool_id": "sum_values",
+        "tool_version": "3",
+        "input_digest": committed["tool_calls"][0]["input_digest"],
+        "output_digest": committed["tool_calls"][0]["output_digest"],
+        "status": "SUCCESS",
+    }]
+    assert committed["tool_calls"][0]["input_digest"]
+    assert committed["tool_calls"][0]["output_digest"]
