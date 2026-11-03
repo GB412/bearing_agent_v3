@@ -171,15 +171,13 @@ def test_runtime_dispatches_registered_agent_and_audits_tool_version(
 
     assert result["termination_reason"] == "GOAL_REACHED"
     committed = next(row for row in result["trace"] if row["stage"] == "committed")
-    assert committed["tool_calls"] == [{
-        "tool_id": "sum_values",
-        "tool_version": "3",
-        "input_digest": committed["tool_calls"][0]["input_digest"],
-        "output_digest": committed["tool_calls"][0]["output_digest"],
-        "status": "SUCCESS",
-    }]
-    assert committed["tool_calls"][0]["input_digest"]
-    assert committed["tool_calls"][0]["output_digest"]
+    assert len(committed["tool_calls"]) == 1
+    call = committed["tool_calls"][0]
+    assert call["tool_id"] == "sum_values"
+    assert call["tool_version"] == "3"
+    assert call["status"] == "SUCCESS"
+    assert call["input_digest"] and call["output_digest"]
+    assert "left" not in str(call) and "right" not in str(call)
 
 
 def test_new_test_profile_runs_without_changing_supervisor_nodes(tmp_path):
