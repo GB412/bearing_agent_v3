@@ -15,8 +15,8 @@ from bearing_agents.domain.enums import (
 from bearing_agents.domain.parameter_registry import ParameterSchemaRegistry
 from bearing_agents.domain.state import DesignState
 from bearing_agents.domain.tasks import engineering_digest
-from bearing_agents.orchestration.registry import AgentContext
 from bearing_agents.knowledge.defaults import KnowledgeBase, build_default_knowledge_base
+from bearing_agents.orchestration.registry import AgentContext
 from bearing_agents.rules.engine import RuleEngine, RuleEvaluationStatus
 
 
