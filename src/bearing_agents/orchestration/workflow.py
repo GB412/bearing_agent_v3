@@ -431,7 +431,7 @@ class Runtime:
             # No engineering patch was committed. Record failure only if inputs are still current.
             try:
                 self._task_command(state, "fail",
-                                   reason=f"FakeAgent rejected: {type(exc).__name__}")
+                                   reason=f"Agent rejected: {type(exc).__name__}")
             except (StateManagerError, StateConflictError):
                 self._expire_active_task(
                     state, "VERSION_STALE: agent failure could not be safely recorded",
@@ -442,7 +442,7 @@ class Runtime:
             )
             return {"errors": state["errors"] + 1,
                     "trace": self._trace(state, stage="agent_error", reason=str(exc),
-                                         tool_calls=tool_calls, demo_only=True)}
+                                         tool_calls=tool_calls)}
 
         receipt = None
         for _ in range(3):
@@ -520,7 +520,6 @@ class Runtime:
             "stage": "committed", "action": state["action"],
             "task_id": state["current_task_id"], "operation_id": receipt.operation_id,
             "domain_version": receipt.state_version, "replayed": receipt.replayed,
-            "demo_only": True,
             "simulation_status": "NOT_AVAILABLE" if state["action"] == "simulation_unavailable"
             else None,
         }
