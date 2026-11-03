@@ -118,16 +118,23 @@ class StateManager:
         *,
         parameter_registry: ParameterSchemaRegistry | None = None,
         stage_registry: StageRequirementRegistry | None = None,
+        supported_scopes: set[str] | frozenset[str] | None = None,
     ):
         self.repository = repository
         self.parameter_registry = parameter_registry or ParameterSchemaRegistry()
         self.stage_registry = stage_registry or StageRequirementRegistry()
+        self.supported_scopes = frozenset({
+            "cylindrical_radial_hydrodynamic", "unknown", "unsupported",
+            *(supported_scopes or ()),
+        })
+        if any(not scope.strip() for scope in self.supported_scopes):
+            raise ValueError("Supported scope IDs must be nonempty")
 
     def create_design(
         self, user_goal: str | None = None, thread_id: str | None = None,
         *, target_scope: str = "cylindrical_radial_hydrodynamic",
     ) -> DesignState:
-        if target_scope not in {"cylindrical_radial_hydrodynamic", "unknown", "unsupported"}:
+        if target_scope not in self.supported_scopes:
             raise StateManagerError("Unknown scope")
         state = DesignState(design_id=str(uuid4()), user_goal=user_goal, thread_id=thread_id,
                             target_scope=target_scope)
@@ -882,9 +889,7 @@ class StateManager:
                 )
                 changed.add("parameter_change_proposals")
         if patch.scope_change is not None:
-            if context.kind != WriterKind.USER or patch.scope_change not in {
-                "cylindrical_radial_hydrodynamic", "unknown", "unsupported",
-            }:
+            if context.kind != WriterKind.USER or patch.scope_change not in self.supported_scopes:
                 raise StateManagerError("Scope change requires a trusted user context")
             if current.target_scope != patch.scope_change:
                 updated.target_scope = patch.scope_change
