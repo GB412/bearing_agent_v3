@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from bearing_agents.core.state_manager import StateManager
+from bearing_agents.domain.candidates import CandidatePrecheckReport
 from bearing_agents.design.agent import DesignAgent
 from bearing_agents.knowledge.defaults import KnowledgeBase
 from bearing_agents.orchestration.registry import AgentRegistry, ToolRegistry
@@ -59,7 +60,7 @@ class BearingDesignApplication:
         *,
         goal: str = "demo",
     ) -> ApplicationTurnResult:
-        receipt, requirements = self.interaction.submit_turn(
+        receipt, _ = self.interaction.submit_turn(
             design_id, content, operation_id,
         )
         execution = self.runtime.invoke(design_id, goal=goal)
@@ -79,8 +80,6 @@ class BearingDesignApplication:
             raise ValueError(
                 f"Precheck did not produce a report: {execution.get('termination_reason')}"
             )
-        from bearing_agents.domain.candidates import CandidatePrecheckReport
-
         report = CandidatePrecheckReport.model_validate(outputs[-1])
         self.validation_service.persist_report(design_id, report)
         return {
