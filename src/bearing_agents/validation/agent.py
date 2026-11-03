@@ -3,10 +3,17 @@
 from dataclasses import dataclass
 
 from bearing_agents.core.readiness import readiness_for
+from bearing_agents.domain.agent_protocols import AgentResult, TaskRecord
 from bearing_agents.domain.candidate_lifecycle import missing_design_variables
 from bearing_agents.domain.candidates import CandidateDesign, CandidatePrecheckReport
-from bearing_agents.domain.enums import ConstraintSeverity, PrecheckStatus, RuleStatus
+from bearing_agents.domain.enums import (
+    AgentResultStatus,
+    ConstraintSeverity,
+    PrecheckStatus,
+    RuleStatus,
+)
 from bearing_agents.domain.state import DesignState
+from bearing_agents.orchestration.registry import AgentContext
 from bearing_agents.domain.tasks import engineering_digest
 from bearing_agents.knowledge.defaults import KnowledgeBase, build_default_knowledge_base
 from bearing_agents.rules.engine import RuleEngine, RuleEvaluationStatus
@@ -45,6 +52,43 @@ class ValidationAgent:
             self.knowledge.rules,
             self.knowledge.sources,
             tables=self.knowledge.tables,
+        )
+
+    def run(
+        self,
+        state: DesignState,
+        task: TaskRecord,
+        *,
+        context: AgentContext | None = None,
+    ) -> AgentResult:
+        if task.action != "precheck_candidate":
+            raise ValueError("ValidationAgent only handles precheck_candidate")
+        target_ref = context.target_ref if context is not None else None
+        if not target_ref or not target_ref.startswith("candidate:"):
+            raise ValueError("MISSING_PRECHECK_TARGET")
+        try:
+            candidate_id, version_text = target_ref.removeprefix("candidate:").rsplit("@", 1)
+            version = int(version_text)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("INVALID_PRECHECK_TARGET") from exc
+        candidate = next(
+            (item for item in state.candidate_designs
+             if item.candidate_id == candidate_id and item.version == version),
+            None,
+        )
+        if candidate is None:
+            raise ValueError("MISSING_PRECHECK_TARGET")
+        report = self.evaluate(state, candidate)
+        status = (
+            AgentResultStatus.SUCCESS
+            if report.status == PrecheckStatus.PRECHECK_PASS
+            else AgentResultStatus.NEEDS_REVIEW
+        )
+        return AgentResult(
+            task_id=task.id,
+            status=status,
+            issues=[report.model_dump(mode="json")],
+            evidence_refs=report.evidence_refs,
         )
 
     def evaluate(self, state: DesignState, candidate: CandidateDesign) -> CandidatePrecheckReport:
