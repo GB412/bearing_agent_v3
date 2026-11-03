@@ -193,16 +193,6 @@ def test_new_test_profile_runs_without_changing_supervisor_nodes(tmp_path):
     )
     design = manager.create_design(target_scope="test_bearing_profile")
 
-    class Planner:
-        def plan(self, summary):
-            return PlanDecision(
-                action="profile_summary",
-                selected_agent="profile_agent",
-                rationale="Dispatch the profile-specific registered action",
-                expected_result="test profile result",
-                state_version=summary.domain_version,
-            )
-
     class ProfileAgent:
         def run(self, state, task):
             return AgentResult(
@@ -212,7 +202,7 @@ def test_new_test_profile_runs_without_changing_supervisor_nodes(tmp_path):
             )
 
     catalog = {
-        "profile_summary": ActionSpec(
+        "produce_summary": ActionSpec(
             executor_id="profile_agent",
             supported_scopes=("test_bearing_profile",),
             terminal=True,
@@ -221,7 +211,6 @@ def test_new_test_profile_runs_without_changing_supervisor_nodes(tmp_path):
     with open_runtime(
         manager,
         tmp_path / "profile-checkpoint.sqlite",
-        planner=Planner(),
         agent_registry=AgentRegistry({"profile_agent": ProfileAgent()}),
         catalog=catalog,
     ) as runtime:
