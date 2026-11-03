@@ -241,8 +241,6 @@ def policy_guard(
         reason = "UNKNOWN_INPUT_REF"
     elif spec.required_gate and not readiness_check(state, spec.required_gate).ready:
         reason = "INPUT_NOT_READY"
-    elif spec.required_gate and state.target_scope != "cylindrical_radial_hydrodynamic":
-        reason = "UNSUPPORTED_SCOPE"
     elif (decision.action == "generate_candidate"
           and "analyze_conditions" not in fresh_completed_actions(state)):
         # Demo-only predecessor. A future engineering Agent will require a
