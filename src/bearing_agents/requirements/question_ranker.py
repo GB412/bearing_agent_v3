@@ -29,9 +29,16 @@ class QuestionRanker:
     def reorder(
         self, questions: list[Question], guidance: RequirementGuidance | None,
     ) -> list[Question]:
-        if len(questions) < 2:
+        # Scope/ambiguity/conflict gates stay ahead of ordinary missing inputs.
+        # The model may only rank questions within the noncritical tier.
+        critical_codes = {
+            "SCOPE_UNKNOWN", "UNSUPPORTED_SCOPE", "INPUT_CONFLICT", "CLARIFY_INPUT",
+        }
+        critical = [q for q in questions if q.reason_code in critical_codes]
+        rankable = [q for q in questions if q.reason_code not in critical_codes]
+        if len(rankable) < 2:
             return list(questions)
-        options = {question.question_id: question for question in questions}
+        options = {question.question_id: question for question in rankable}
         payload = {
             "task": "Order ONLY the question IDs provided. Never invent data or approvals.",
             "options": [
@@ -40,7 +47,7 @@ class QuestionRanker:
                     "reason_code": item.reason_code,
                     "why_needed": item.why_needed,
                 }
-                for item in questions
+                for item in rankable
             ],
             "scenario_hint": guidance.scenario_hint if guidance else None,
             "objective_hints": guidance.objective_hints if guidance else [],
@@ -60,6 +67,6 @@ class QuestionRanker:
         ordered = response.ordered_question_ids
         if len(ordered) != len(set(ordered)) or any(qid not in options for qid in ordered):
             raise QuestionRankingError("QUESTION_ID_NOT_ALLOWED")
-        return [options[qid] for qid in ordered] + [
-            item for item in questions if item.question_id not in set(ordered)
+        return critical + [options[qid] for qid in ordered] + [
+            item for item in rankable if item.question_id not in set(ordered)
         ]
