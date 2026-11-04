@@ -60,6 +60,7 @@ def catalog_hash(catalog: dict[str, ActionSpec] | None = None) -> str:
             "version": spec.version,
             "supported_scopes": list(spec.supported_scopes),
             "candidate_source": spec.candidate_source,
+            "required_completed_actions": list(spec.required_completed_actions),
             "terminal": spec.terminal,
         }
         for name, spec in sorted(selected.items())
@@ -70,6 +71,7 @@ def catalog_hash(catalog: dict[str, ActionSpec] | None = None) -> str:
 def build_prompt(summary: StateSummary, context: PlannerContext) -> str:
     action_scopes = dict(context.action_scope_descriptions)
     action_terminals = dict(context.action_terminal_descriptions)
+    action_prerequisites = dict(context.action_prerequisite_descriptions)
     actions = [
         {
             "action": action,
@@ -78,6 +80,7 @@ def build_prompt(summary: StateSummary, context: PlannerContext) -> str:
             "supported": supported,
             "supported_scopes": list(action_scopes.get(action, ("*",))),
             "terminal": action_terminals.get(action, False),
+            "required_completed_actions": list(action_prerequisites.get(action, ())),
         }
         for action, effect, gate, supported in context.action_descriptions
     ]
@@ -231,6 +234,10 @@ class LLMPlanner:
                 ),
                 action_terminal_descriptions=tuple(
                     (name, spec.terminal)
+                    for name, spec in sorted(self.catalog.items())
+                ),
+                action_prerequisite_descriptions=tuple(
+                    (name, spec.required_completed_actions)
                     for name, spec in sorted(self.catalog.items())
                 ),
             )
