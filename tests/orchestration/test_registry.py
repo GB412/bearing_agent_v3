@@ -216,3 +216,53 @@ def test_new_test_profile_runs_without_changing_supervisor_nodes(tmp_path):
 
     assert result["termination_reason"] == "GOAL_REACHED"
     assert result["agent_outputs"] == [{"scope": "test_bearing_profile", "profile_test": True}]
+
+
+
+def test_registered_action_prerequisite_is_checked_without_special_case(ready):
+    catalog = {
+        "custom_engineering_action": ActionSpec(
+            executor_id="custom_agent",
+            required_completed_actions=("analyze_conditions",),
+            supported_scopes=("cylindrical_radial_hydrodynamic",),
+        )
+    }
+    decision = PlanDecision(
+        action="custom_engineering_action",
+        selected_agent="custom_agent",
+        rationale="No analysis receipt yet",
+        expected_result="not permitted",
+        state_version=ready.state_version,
+    )
+    blocked = policy_guard(decision, ready, None, catalog)
+    assert blocked.verdict == "BLOCK"
+    assert blocked.reason_code == "PREREQUISITE_NOT_READY"
+
+
+def test_real_agent_dispatch_audit_never_claims_fake_demo(manager, ready, tmp_path):
+    from bearing_agents.orchestration.workflow import open_runtime
+
+    class RealAgent:
+        def run(self, state, task):
+            return AgentResult(
+                task_id=task.id,
+                status=AgentResultStatus.SUCCESS,
+                issues=[{"source": "real_in_process_tool"}],
+            )
+
+    catalog = dict(CATALOG)
+    catalog["produce_summary"] = ActionSpec(
+        executor_id="real_agent",
+        terminal=True,
+    )
+    with open_runtime(
+        manager,
+        tmp_path / "real-agent.sqlite",
+        agent_registry=AgentRegistry({"real_agent": RealAgent()}),
+        catalog=catalog,
+    ) as runtime:
+        execution = runtime.invoke(ready.design_id, goal="summary")
+    committed = next(
+        event for event in execution["trace"] if event["stage"] == "committed"
+    )
+    assert committed["demo_only"] is False
