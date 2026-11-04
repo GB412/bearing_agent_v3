@@ -61,6 +61,7 @@ def catalog_hash(catalog: dict[str, ActionSpec] | None = None) -> str:
             "supported_scopes": list(spec.supported_scopes),
             "candidate_source": spec.candidate_source,
             "required_completed_actions": list(spec.required_completed_actions),
+            "prerequisite_failure_code": spec.prerequisite_failure_code,
             "terminal": spec.terminal,
         }
         for name, spec in sorted(selected.items())
