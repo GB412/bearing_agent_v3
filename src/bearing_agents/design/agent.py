@@ -168,6 +168,14 @@ class DesignAgent:
         """Classify feasible diagnostic steps without inventing performance results."""
         analysis = self.analyze_conditions(state)
         metrics = analysis.derived_metrics
+        width = state.parameters.get("bearing_width")
+        trusted_width = bool(
+            width is not None
+            and (
+                (width.status == ParameterStatus.CONFIRMED and width.confirmed_by)
+                or (width.status == ParameterStatus.PROVIDED and width.verified_source_ref)
+            )
+        )
         active_rules = [
             rule for rule in self.knowledge.rules.for_scope(state.target_scope)
             if rule.status == RuleStatus.ACTIVE
@@ -183,9 +191,12 @@ class DesignAgent:
             ),
             AnalysisStep(
                 step_id="mean_pressure",
-                status=("DERIVED" if "mean_pressure" in metrics else
-                        "NEEDS_DESIGN_VARIABLE" if "journal_diameter" in state.parameters
-                        and "load" in state.parameters else "NEEDS_EXTERNAL_INPUT"),
+                status=(
+                    "DERIVED" if "mean_pressure" in metrics and trusted_width else
+                    "PROVISIONAL_DERIVATION" if "mean_pressure" in metrics else
+                    "NEEDS_DESIGN_VARIABLE" if "journal_diameter" in state.parameters
+                    and "load" in state.parameters else "NEEDS_EXTERNAL_INPUT"
+                ),
                 reason="Projected F/(D*B), not the maximum lubricant-film pressure.",
                 required_inputs=["load", "journal_diameter", "bearing_width"],
             ),
