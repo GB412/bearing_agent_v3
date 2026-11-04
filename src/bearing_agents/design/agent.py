@@ -168,6 +168,12 @@ class DesignAgent:
         """Classify feasible diagnostic steps without inventing performance results."""
         analysis = self.analyze_conditions(state)
         metrics = analysis.derived_metrics
+        active_rules = [
+            rule for rule in self.knowledge.rules.for_scope(state.target_scope)
+            if rule.status == RuleStatus.ACTIVE
+        ]
+        material_rules = [rule.rule_id for rule in active_rules if "material" in rule.inputs]
+        lubricant_rules = [rule.rule_id for rule in active_rules if "lubricant" in rule.inputs]
         output = [
             AnalysisStep(
                 step_id="surface_speed",
@@ -194,14 +200,16 @@ class DesignAgent:
                 required_inputs=["lubricant", "rotational_speed"],
             ),
             AnalysisStep(
-                step_id="material_limits", status="NEEDS_REVIEWED_RULE",
+                step_id="material_limits",
+                status="REVIEWED_RULE_AVAILABLE" if material_rules else "NEEDS_REVIEWED_RULE",
                 reason="Permissible material limits must come from reviewed ACTIVE rules.",
-                required_inputs=["material"],
+                required_inputs=["material"], evidence_refs=material_rules,
             ),
             AnalysisStep(
-                step_id="lubricant_selection", status="NEEDS_REVIEWED_RULE",
+                step_id="lubricant_selection",
+                status="REVIEWED_RULE_AVAILABLE" if lubricant_rules else "NEEDS_REVIEWED_RULE",
                 reason="Lubricant selection requires approved tables and operating conditions.",
-                required_inputs=["lubricant"],
+                required_inputs=["lubricant"], evidence_refs=lubricant_rules,
             ),
         ]
         return output
