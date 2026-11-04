@@ -51,6 +51,7 @@ class ActionSpec:
     version: str = "1"
     supported_scopes: tuple[str, ...] = ("*",)
     candidate_source: str | None = None
+    required_completed_actions: tuple[str, ...] = ()
     terminal: bool = False
 
 
@@ -66,6 +67,7 @@ CATALOG = {
         "design_fake", required_gate="R2", effect_class="CANDIDATE_PROPOSAL",
         supported_scopes=("cylindrical_radial_hydrodynamic",),
         candidate_source="design_agent",
+        required_completed_actions=("analyze_conditions",),
     ),
     "precheck_candidate": ActionSpec(
         "validation_agent", required_gate="R2",
@@ -108,6 +110,7 @@ class PlannerContext:
     action_descriptions: tuple[tuple[str, str, str | None, bool], ...] = ()
     action_scope_descriptions: tuple[tuple[str, tuple[str, ...]], ...] = ()
     action_terminal_descriptions: tuple[tuple[str, bool], ...] = ()
+    action_prerequisite_descriptions: tuple[tuple[str, tuple[str, ...]], ...] = ()
     recent_failures: tuple[str, ...] = ()
     # None means the caller did not supply a budget; zero means it is exhausted.
     remaining_steps: int | None = None
@@ -241,11 +244,13 @@ def policy_guard(
         reason = "UNKNOWN_INPUT_REF"
     elif spec.required_gate and not readiness_check(state, spec.required_gate).ready:
         reason = "INPUT_NOT_READY"
-    elif (decision.action == "generate_candidate"
-          and "analyze_conditions" not in fresh_completed_actions(state)):
-        # Demo-only predecessor. A future engineering Agent will require a
-        # traceable validated analysis result rather than only a task receipt.
-        reason = "ANALYSIS_NOT_READY"
+    elif any(
+        action not in fresh_completed_actions(state)
+        for action in spec.required_completed_actions
+    ):
+        # Requirements are supplied by the trusted ActionSpec, not embedded
+        # into the Supervisor. Completion must have a fresh task receipt.
+        reason = "PREREQUISITE_NOT_READY"
     elif (decision.action == "precheck_candidate"
           and not (target_ref and target_ref.startswith("candidate:")
                    and target_exists(state, target_ref))):
