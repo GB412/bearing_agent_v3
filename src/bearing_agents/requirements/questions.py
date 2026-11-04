@@ -23,6 +23,8 @@ _QUESTION_CATALOG = {
 
 def _external_order(text: str) -> tuple[str, ...]:
     """Reorder only actual R2 inputs; never promote a design variable to a required fact."""
+    if "载荷" in text and any(tag in text for tag in ("估计", "大约", "不确定")):
+        return ("load", "journal_diameter", "rotational_speed")
     if any(word in text for word in ("温升", "高速", "发热", "temperature", "high speed")):
         return ("rotational_speed", "load", "journal_diameter")
     if any(word in text for word in ("重载", "承载", "大载荷", "load capacity")):
