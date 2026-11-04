@@ -108,6 +108,7 @@ def open_application(
     agents: dict[str, Any] | None = None,
     agent_registry: AgentRegistry | None = None,
     tool_registry: ToolRegistry | None = None,
+    requirements_question_ranker=None,
     catalog=None,
     knowledge: KnowledgeBase | None = None,
     **runtime_options,
@@ -123,6 +124,20 @@ def open_application(
     if tool_registry is not None and not isinstance(tool_registry, ToolRegistry):
         raise TypeError("tool_registry must be a ToolRegistry")
 
+    if tool_registry is None:
+        # The read-only message lookup is scoped to the trusted design ID
+        # supplied by Runtime, not a model-authored identity.
+        tool_registry = ToolRegistry()
+
+        def last_user_turn(design_id: str) -> str:
+            messages = manager.repository.list_user_messages(design_id)
+            return messages[-1].content[:2000] if messages else ""
+
+        tool_registry.register(
+            "last_user_turn", last_user_turn,
+            allowed_agent_ids={"requirements_fake"}, version="1",
+        )
+
     design_agent = DesignAgent(
         knowledge=knowledge,
         parameter_registry=manager.parameter_registry,
@@ -131,6 +146,7 @@ def open_application(
     registered = {
         "requirements_fake": RequirementsAgent(
             manager.stage_registry, manager.parameter_registry,
+            question_ranker=requirements_question_ranker,
         ),
         "conditions_fake": design_agent,
         "design_fake": design_agent,
