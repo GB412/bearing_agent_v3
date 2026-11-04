@@ -109,7 +109,10 @@ def test_candidate_precheck_comparison_requires_identical_evidence_and_completen
             input_digest="synthetic-test-input",
             rule_set_version="reviewed-1",
             status=status,
-            checks=[{"rule_id": "verified-test-rule", "status": status.value}],
+            checks=[{
+                "rule_id": "verified-test-rule",
+                "status": "PASS" if status == PrecheckStatus.PRECHECK_PASS else "FAIL",
+            }],
             evidence_refs=["synthetic-test-evidence"],
         )
         return CandidateDesign(
