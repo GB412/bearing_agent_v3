@@ -1,5 +1,10 @@
 from bearing_agents.core.readiness import StageRequirementRegistry, readiness_for
-from bearing_agents.design.contracts import CandidateProposal, ConditionAnalysis, DesignStrategy
+from bearing_agents.design.contracts import (
+    AnalysisStep,
+    CandidateProposal,
+    ConditionAnalysis,
+    DesignStrategy,
+)
 from bearing_agents.domain.agent_protocols import AgentResult, StatePatch, TaskRecord
 from bearing_agents.domain.candidate_lifecycle import missing_design_variables
 from bearing_agents.domain.candidates import CandidateDesign
@@ -31,7 +36,9 @@ class DesignAgent:
         knowledge: KnowledgeBase | None = None,
         parameter_registry: ParameterSchemaRegistry | None = None,
         stage_registry: StageRequirementRegistry | None = None,
+        strategy_advisor=None,
     ):
+        self.strategy_advisor = strategy_advisor
         self.knowledge = knowledge or build_default_knowledge_base()
         self.parameters = parameter_registry or ParameterSchemaRegistry()
         self.stage_registry = stage_registry
@@ -157,6 +164,48 @@ class DesignAgent:
             cautions=cautions,
         )
 
+    def _analysis_steps(self, state: DesignState) -> list[AnalysisStep]:
+        """Classify feasible diagnostic steps without inventing performance results."""
+        analysis = self.analyze_conditions(state)
+        metrics = analysis.derived_metrics
+        output = [
+            AnalysisStep(
+                step_id="surface_speed",
+                status="DERIVED" if "surface_speed" in metrics else "NEEDS_EXTERNAL_INPUT",
+                reason="Kinematic indicator only; no approved speed limit is inferred.",
+                required_inputs=["journal_diameter", "rotational_speed"],
+            ),
+            AnalysisStep(
+                step_id="mean_pressure",
+                status=("DERIVED" if "mean_pressure" in metrics else
+                        "NEEDS_DESIGN_VARIABLE" if "journal_diameter" in state.parameters
+                        and "load" in state.parameters else "NEEDS_EXTERNAL_INPUT"),
+                reason="Projected F/(D*B), not the maximum lubricant-film pressure.",
+                required_inputs=["load", "journal_diameter", "bearing_width"],
+            ),
+            AnalysisStep(
+                step_id="minimum_film_thickness", status="SOLVER_NOT_AVAILABLE",
+                reason="No approved professional oil-film solver is installed.",
+                required_inputs=["radial_clearance", "lubricant"],
+            ),
+            AnalysisStep(
+                step_id="thermal_balance", status="SOLVER_NOT_AVAILABLE",
+                reason="No validated thermal-balance calculator is installed.",
+                required_inputs=["lubricant", "rotational_speed"],
+            ),
+            AnalysisStep(
+                step_id="material_limits", status="NEEDS_REVIEWED_RULE",
+                reason="Permissible material limits must come from reviewed ACTIVE rules.",
+                required_inputs=["material"],
+            ),
+            AnalysisStep(
+                step_id="lubricant_selection", status="NEEDS_REVIEWED_RULE",
+                reason="Lubricant selection requires approved tables and operating conditions.",
+                required_inputs=["lubricant"],
+            ),
+        ]
+        return output
+
     def build_strategy(self, state: DesignState) -> DesignStrategy:
         rules = self.knowledge.rules.for_scope(state.target_scope)
         active = [r for r in rules if r.status == RuleStatus.ACTIVE]
@@ -169,6 +218,12 @@ class DesignAgent:
             f"{h.source.document_number}@{h.source.version}#{h.entry.section}"
             for h in hits
         ]
+        steps = self._analysis_steps(state)
+        advisory_note = None
+        if self.strategy_advisor is not None:
+            steps, advisory_note = self.strategy_advisor.prioritize(
+                steps, objective=state.user_goal or "",
+            )
         return DesignStrategy(
             strategy_id=engineering_digest(state)[:16],
             objective=state.user_goal or "cylindrical_radial_hydrodynamic_preliminary_design",
@@ -181,6 +236,13 @@ class DesignAgent:
                 "User fixed inputs and approved constraints are not design variables.",
                 "Table lookup never interpolates or extrapolates.",
             ],
+            analysis_steps=steps,
+            risk_questions=[
+                "Minimum oil-film thickness has not been evaluated.",
+                "Thermal balance and operating temperature have not been evaluated.",
+                "Candidate material and lubricant limits require reviewed evidence.",
+            ],
+            unverified_advisory=advisory_note,
         )
 
     @staticmethod

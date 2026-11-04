@@ -109,6 +109,7 @@ def open_application(
     agent_registry: AgentRegistry | None = None,
     tool_registry: ToolRegistry | None = None,
     requirements_question_ranker=None,
+    design_strategy_advisor=None,
     catalog=None,
     knowledge: KnowledgeBase | None = None,
     **runtime_options,
@@ -142,6 +143,7 @@ def open_application(
         knowledge=knowledge,
         parameter_registry=manager.parameter_registry,
         stage_registry=manager.stage_registry,
+        strategy_advisor=design_strategy_advisor,
     )
     registered = {
         "requirements_fake": RequirementsAgent(
