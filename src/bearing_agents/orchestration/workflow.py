@@ -520,6 +520,9 @@ class Runtime:
             "stage": "committed", "action": state["action"],
             "task_id": state["current_task_id"], "operation_id": receipt.operation_id,
             "domain_version": receipt.state_version, "replayed": receipt.replayed,
+            "demo_only": isinstance(
+                self.agent_registry.get(state["executor"]), FakeAgent
+            ),
             "simulation_status": "NOT_AVAILABLE" if state["action"] == "simulation_unavailable"
             else None,
         }
