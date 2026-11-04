@@ -266,3 +266,20 @@ def test_real_agent_dispatch_audit_never_claims_fake_demo(manager, ready, tmp_pa
         event for event in execution["trace"] if event["stage"] == "committed"
     )
     assert committed["demo_only"] is False
+
+
+
+def test_fake_validation_executor_cannot_report_precheck_pass(ready):
+    from bearing_agents.domain.agent_protocols import TaskRecord
+    from bearing_agents.domain.enums import TaskStatus
+    from bearing_agents.orchestration.contracts import FakeAgent
+
+    task = TaskRecord(
+        id="fake-precheck", action="precheck_candidate",
+        agent="validation_agent", status=TaskStatus.RUNNING,
+        input_version=ready.state_version,
+    )
+    result = FakeAgent().run(ready, task)
+    assert result.status == AgentResultStatus.NEEDS_REVIEW
+    assert result.issues[0]["demo_only"] is True
+    assert "not registered" in result.issues[0]["message"]
