@@ -38,7 +38,9 @@ class InteractionService:
     def show_state(self, design_id: str):
         state = self.manager.get_design(design_id)
         gate = self.manager.readiness_for(design_id, "R2")
-        return build_view(state, gate)
+        messages = self.manager.repository.list_user_messages(design_id)
+        recent_text = messages[-1].content if messages else ""
+        return build_view(state, gate, recent_text=recent_text)
 
     def resume_session(self, design_id: str):
         return self.show_state(design_id)
@@ -161,7 +163,7 @@ class InteractionService:
         )
         latest = self.manager.get_design(design_id)
         gate = self.manager.readiness_for(design_id, "R2")
-        return receipt, build_view(latest, gate, uncertain)
+        return receipt, build_view(latest, gate, uncertain, recent_text=content)
 
     def correct_parameter(
         self, design_id: str, parameter_id: str, revision: int,

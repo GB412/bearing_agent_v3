@@ -53,6 +53,25 @@ class Question(BaseModel):
     question_id: str
     reason_code: str
     text: str = Field(min_length=1, max_length=300)
+    why_needed: str | None = None
+
+
+class RequirementGuidance(BaseModel):
+    """Advisory interpretation, never a trusted engineering parameter."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scenario_hint: str | None = None
+    scenario_confirmed: bool = False
+    objective_hints: list[str] = Field(default_factory=list)
+    required_external_missing: list[str] = Field(default_factory=list)
+    proposable_design_variables: list[str] = Field(default_factory=list)
+    derived_not_requested: list[str] = Field(default_factory=list)
+    pending_user_decisions: list[str] = Field(default_factory=list)
+    optional_topics: list[str] = Field(default_factory=list)
+    next_step: Literal["CLARIFY_SCOPE", "RESOLVE_CONFLICT", "COLLECT_EXTERNAL",
+                       "APPROVE_CONSTRAINT", "READY_FOR_DESIGN"]
+    note: str
 
 
 class RequirementSpecView(BaseModel):
@@ -66,6 +85,7 @@ class RequirementSpecView(BaseModel):
     questions: list[Question] = Field(default_factory=list)
     unresolved: list[str] = Field(default_factory=list)
     pending_constraints: list[str] = Field(default_factory=list)
+    guidance: RequirementGuidance | None = None
 
 
 class InteractionReceipt(BaseModel):

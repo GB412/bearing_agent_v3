@@ -6,6 +6,7 @@ from bearing_agents.domain.agent_protocols import AgentResult, TaskRecord
 from bearing_agents.domain.enums import AgentResultStatus
 from bearing_agents.domain.parameter_registry import ParameterSchemaRegistry
 from bearing_agents.domain.state import DesignState
+from bearing_agents.orchestration.registry import AgentContext
 from bearing_agents.requirements.questions import build_view
 
 
@@ -20,6 +21,7 @@ class RequirementsAgent:
         self,
         stage_registry: StageRequirementRegistry | None = None,
         parameter_registry: ParameterSchemaRegistry | None = None,
+        question_ranker=None,
     ):
         # Backward-compatible constructor input only: copy the two read-only
         # registries and do not retain the StateManager reference.
@@ -29,8 +31,11 @@ class RequirementsAgent:
             parameter_registry = parameter_registry or manager.parameter_registry
         self.stage_registry = stage_registry
         self.parameter_registry = parameter_registry
+        self.question_ranker = question_ranker
 
-    def run(self, state: DesignState, task: TaskRecord) -> AgentResult:
+    def run(
+        self, state: DesignState, task: TaskRecord, *, context: AgentContext | None = None,
+    ) -> AgentResult:
         if task.action != "clarify_requirement":
             raise ValueError("RequirementsAgent only handles clarify_requirement")
         gate = readiness_for(
@@ -39,7 +44,13 @@ class RequirementsAgent:
             self.stage_registry,
             parameter_registry=self.parameter_registry,
         )
-        view = build_view(state, gate)
+        recent_text = ""
+        if context is not None and "last_user_turn" in context.tools.available_tool_ids:
+            recent_text = context.tools.call("last_user_turn", design_id=state.design_id)
+        view = build_view(state, gate, recent_text=recent_text)
+        questions = view.questions
+        if self.question_ranker is not None and len(questions) > 1:
+            questions = self.question_ranker.reorder(questions, view.guidance)
         return AgentResult(
             task_id=task.id,
             status=AgentResultStatus.SUCCESS,
@@ -49,6 +60,6 @@ class RequirementsAgent:
                     "reason_code": question.reason_code,
                     "question": question.text,
                 }
-                for question in view.questions
+                for question in questions
             ],
         )
