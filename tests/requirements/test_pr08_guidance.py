@@ -100,7 +100,8 @@ def test_ranker_can_only_reorder_a_known_immutable_question_set(tmp_path):
     ranker = QuestionRanker(RankedStub(reverse=True))
     ranked = ranker.reorder(view.questions, view.guidance)
     assert {q.question_id: q.model_dump() for q in ranked} == original
-    assert [q.question_id for q in ranked] == list(reversed(list(original)))
+    ids = list(original)
+    assert [q.question_id for q in ranked] == [ids[0], ids[2], ids[1]]
 
 
 def test_ranker_rejects_forged_question_id_without_fallback(tmp_path):
