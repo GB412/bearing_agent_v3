@@ -31,6 +31,15 @@ class ValidationService:
         if candidate is None:
             raise ValueError("Unknown candidate version")
         report = self.agent.evaluate(state, candidate)
+        return self.persist_report(design_id, report)
+
+    def persist_report(
+        self,
+        design_id: str,
+        report: CandidatePrecheckReport,
+    ) -> CandidatePrecheckReport:
+        """Persist an already computed, evidence-bound report through StateManager."""
+        state = self.manager.get_design(design_id)
         self.manager.record_candidate_precheck(
             design_id,
             state.state_version,

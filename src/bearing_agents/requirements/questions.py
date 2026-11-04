@@ -1,17 +1,19 @@
 """Deterministic user questions based on authoritative readiness, never a second R2."""
 
-from bearing_agents.core.state_manager import StateManager
+from bearing_agents.core.readiness import ReadinessResult
+from bearing_agents.domain.state import DesignState
 from bearing_agents.requirements.contracts import Question, RequirementSpecView
 
 
-def build_view(manager: StateManager, design_id: str, unresolved=()) -> RequirementSpecView:
-    state=manager.get_design(design_id)
-    gate=manager.readiness_for(design_id, "R2")
+def build_view(
+    state: DesignState, gate: ReadinessResult, unresolved=(),
+) -> RequirementSpecView:
+    """Pure projection of an authoritative state and its trusted readiness result."""
     questions=[]
     def ask(code, message):
         if len(questions)<3 and code not in {q.reason_code for q in questions}:
             questions.append(Question(
-                question_id=f"{design_id}:{state.state_version}:{code}",
+                question_id=f"{state.design_id}:{state.state_version}:{code}",
                 reason_code=code,text=message,
             ))
     if state.target_scope=="unknown":

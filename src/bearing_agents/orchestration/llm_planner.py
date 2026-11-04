@@ -58,6 +58,11 @@ def catalog_hash(catalog: dict[str, ActionSpec] | None = None) -> str:
             "effect": spec.effect_class,
             "supported": spec.supported,
             "version": spec.version,
+            "supported_scopes": list(spec.supported_scopes),
+            "candidate_source": spec.candidate_source,
+            "required_completed_actions": list(spec.required_completed_actions),
+            "prerequisite_failure_code": spec.prerequisite_failure_code,
+            "terminal": spec.terminal,
         }
         for name, spec in sorted(selected.items())
     ]
@@ -65,12 +70,18 @@ def catalog_hash(catalog: dict[str, ActionSpec] | None = None) -> str:
 
 
 def build_prompt(summary: StateSummary, context: PlannerContext) -> str:
+    action_scopes = dict(context.action_scope_descriptions)
+    action_terminals = dict(context.action_terminal_descriptions)
+    action_prerequisites = dict(context.action_prerequisite_descriptions)
     actions = [
         {
             "action": action,
             "effect_class": effect,
             "required_gate": gate,
             "supported": supported,
+            "supported_scopes": list(action_scopes.get(action, ("*",))),
+            "terminal": action_terminals.get(action, False),
+            "required_completed_actions": list(action_prerequisites.get(action, ())),
         }
         for action, effect, gate, supported in context.action_descriptions
     ]
@@ -217,7 +228,19 @@ class LLMPlanner:
                 action_descriptions=tuple(
                     (name, spec.effect_class, spec.required_gate, spec.supported)
                     for name, spec in sorted(self.catalog.items())
-                )
+                ),
+                action_scope_descriptions=tuple(
+                    (name, spec.supported_scopes)
+                    for name, spec in sorted(self.catalog.items())
+                ),
+                action_terminal_descriptions=tuple(
+                    (name, spec.terminal)
+                    for name, spec in sorted(self.catalog.items())
+                ),
+                action_prerequisite_descriptions=tuple(
+                    (name, spec.required_completed_actions)
+                    for name, spec in sorted(self.catalog.items())
+                ),
             )
         prompt = build_prompt(summary, context)
         started = monotonic()

@@ -11,7 +11,6 @@ from langgraph.types import Command, interrupt
 
 from bearing_agents.core.readiness import readiness_for
 from bearing_agents.core.state_manager import StateManager, StateManagerError, VersionConflictError
-from bearing_agents.design.agent import DesignAgent
 from bearing_agents.domain.agent_protocols import PlanDecision, TaskRecord
 from bearing_agents.domain.enums import TaskStatus
 from bearing_agents.domain.tasks import (
@@ -33,6 +32,7 @@ from bearing_agents.orchestration.contracts import (
     target_exists,
     validate_result,
 )
+from bearing_agents.orchestration.registry import AgentContext, AgentRegistry, ToolRegistry
 
 SYSTEM = WriteContext(kind=WriterKind.SYSTEM, actor="pr02-runtime")
 
@@ -40,21 +40,40 @@ SYSTEM = WriteContext(kind=WriterKind.SYSTEM, actor="pr02-runtime")
 class Runtime:
     def __init__(
         self, manager: StateManager, checkpointer, *, planner=None, agents=None,
+        agent_registry=None, tool_registry=None,
         max_steps=12, max_same_action=3, max_errors=3, catalog=None,
     ):
         if min(max_steps, max_same_action, max_errors) < 1:
             raise ValueError("Budgets must be positive")
+        if agents is not None and agent_registry is not None:
+            raise ValueError("Pass agents or agent_registry, not both")
         self.manager = manager
         self.planner = planner or FakePlanner()
         self.catalog = dict(CATALOG if catalog is None else catalog)
         if hasattr(self.planner, "bind_catalog"):
             self.planner.bind_catalog(self.catalog)
-        self.agents = {
+        registered_agents = {
             spec.executor_id: FakeAgent() for spec in self.catalog.values()
-            if spec.effect_class == "READ_ONLY"
+            if spec.supported and spec.effect_class in {"READ_ONLY", "CANDIDATE_PROPOSAL"}
         }
+        if agent_registry is not None:
+            if not isinstance(agent_registry, AgentRegistry):
+                raise TypeError("agent_registry must be an AgentRegistry")
+            registered_agents.update(agent_registry.as_dict())
         if agents:
-            self.agents.update(agents)
+            registered_agents.update(agents)
+        self.agent_registry = AgentRegistry(registered_agents)
+        self.agents = self.agent_registry.as_dict()  # Read-only compatibility snapshot.
+        self.tool_registry = tool_registry or ToolRegistry()
+        if not isinstance(self.tool_registry, ToolRegistry):
+            raise TypeError("tool_registry must be a ToolRegistry")
+        required_executors = {
+            spec.executor_id for spec in self.catalog.values()
+            if spec.supported and spec.effect_class in {"READ_ONLY", "CANDIDATE_PROPOSAL"}
+        }
+        missing_executors = required_executors - set(self.agent_registry.executor_ids)
+        if missing_executors:
+            raise ValueError(f"Missing registered executors: {sorted(missing_executors)}")
         self.max_steps, self.max_same_action, self.max_errors = (
             max_steps, max_same_action, max_errors,
         )
@@ -182,6 +201,18 @@ class Runtime:
         context = PlannerContext(
             action_descriptions=tuple(
                 (name, spec.effect_class, spec.required_gate, spec.supported)
+                for name, spec in sorted(self.catalog.items())
+            ),
+            action_scope_descriptions=tuple(
+                (name, spec.supported_scopes)
+                for name, spec in sorted(self.catalog.items())
+            ),
+            action_terminal_descriptions=tuple(
+                (name, spec.terminal)
+                for name, spec in sorted(self.catalog.items())
+            ),
+            action_prerequisite_descriptions=tuple(
+                (name, spec.required_completed_actions)
                 for name, spec in sorted(self.catalog.items())
             ),
             recent_failures=tuple(
@@ -364,18 +395,28 @@ class Runtime:
             return {"confirmation": request, "last_result_ref": receipt.event_id,
                     "trace": self._trace(state, stage="waiting", request_id=request["request_id"],
                                          domain_version=receipt.state_version)}
+        agent_context = None
+        tool_calls = []
         try:
             task = next(t for t in domain.task_plan if t.id == state["current_task_id"])
-            result = self.agents[state["executor"]].run(domain.model_copy(deep=True),
-                                                        task.model_copy(deep=True))
+            action_spec = self.catalog[state["action"]]
+            agent_context = AgentContext(
+                action=state["action"],
+                target_ref=state.get("target_ref"),
+                input_refs=tuple(state.get("input_refs", [])),
+                tools=self.tool_registry.for_agent(state["executor"]),
+            )
+            result = self.agent_registry.invoke(
+                state["executor"], domain.model_copy(deep=True), task.model_copy(deep=True),
+                context=agent_context,
+            )
             validate_result(
                 result,
                 task.id,
-                allow_candidate_additions=(
-                    state["action"] == "generate_candidate"
-                    and type(self.agents[state["executor"]]) is DesignAgent
-                ),
+                effect_class=action_spec.effect_class,
+                candidate_source=action_spec.candidate_source,
             )
+            tool_calls = [call.as_dict() for call in agent_context.tools.calls]
             public_outputs = [
                 item if isinstance(item, dict) else str(item)
                 for item in result.issues[:8]
@@ -394,14 +435,18 @@ class Runtime:
             # No engineering patch was committed. Record failure only if inputs are still current.
             try:
                 self._task_command(state, "fail",
-                                   reason=f"FakeAgent rejected: {type(exc).__name__}")
+                                   reason=f"Agent rejected: {type(exc).__name__}")
             except (StateManagerError, StateConflictError):
                 self._expire_active_task(
                     state, "VERSION_STALE: agent failure could not be safely recorded",
                 )
+            tool_calls = (
+                [call.as_dict() for call in agent_context.tools.calls]
+                if agent_context is not None else []
+            )
             return {"errors": state["errors"] + 1,
                     "trace": self._trace(state, stage="agent_error", reason=str(exc),
-                                         demo_only=True)}
+                                         tool_calls=tool_calls)}
 
         receipt = None
         for _ in range(3):
@@ -453,31 +498,48 @@ class Runtime:
                                          reason="VERSION_STALE")}
         return self._completed(state, domain, receipt, questions=public_questions,
                                agent_outputs=public_outputs,
-                               agent_status=result.status.value)
+                               agent_status=result.status.value, tool_calls=tool_calls)
 
     def _completed(self, state, domain, receipt, *, questions=None, agent_outputs=None,
-                   agent_status="SUCCESS"):
-        reason = {"clarify_requirement": "MISSING_INPUT", "produce_summary": "GOAL_REACHED",
-                  "simulation_unavailable": "UNSUPPORTED_ACTION"}.get(state["action"])
+                   agent_status="SUCCESS", tool_calls=None):
+        reason = {
+            "clarify_requirement": "MISSING_INPUT",
+            "produce_summary": "GOAL_REACHED",
+            "precheck_candidate": "GOAL_REACHED",
+            "simulation_unavailable": "UNSUPPORTED_ACTION",
+        }.get(state["action"])
+        if reason is None and self.catalog[state["action"]].terminal:
+            reason = "GOAL_REACHED"
         if agent_status == "INSUFFICIENT_RULES":
             reason = "INSUFFICIENT_RULES"
         elif agent_status == "NEEDS_REVIEW":
             reason = "NEEDS_REVIEW"
-        if domain.target_scope not in {"cylindrical_radial_hydrodynamic", "unknown"}:
+        action_scopes = self.catalog[state["action"]].supported_scopes
+        if domain.target_scope == "unsupported" or (
+            domain.target_scope not in {"cylindrical_radial_hydrodynamic", "unknown"}
+            and "*" not in action_scopes and domain.target_scope not in action_scopes
+        ):
             reason = "UNSUPPORTED_ACTION"
-        return {"last_result_ref": receipt.event_id, "termination_reason": reason,
-                "questions": questions if questions is not None else state.get("questions", []),
-                "agent_outputs": (
-                    agent_outputs if agent_outputs is not None else state.get("agent_outputs", [])
-                ),
-                "trace": self._trace(state, stage="committed", action=state["action"],
-                                     task_id=state["current_task_id"],
-                                     operation_id=receipt.operation_id,
-                                     domain_version=receipt.state_version,
-                                     replayed=receipt.replayed,
-                                     demo_only=True,
-                                     simulation_status="NOT_AVAILABLE" if state["action"]
-                                     == "simulation_unavailable" else None)}
+        trace_entry = {
+            "stage": "committed", "action": state["action"],
+            "task_id": state["current_task_id"], "operation_id": receipt.operation_id,
+            "domain_version": receipt.state_version, "replayed": receipt.replayed,
+            "demo_only": isinstance(
+                self.agent_registry.get(state["executor"]), FakeAgent
+            ),
+            "simulation_status": "NOT_AVAILABLE" if state["action"] == "simulation_unavailable"
+            else None,
+        }
+        if tool_calls:
+            trace_entry["tool_calls"] = tool_calls
+        return {
+            "last_result_ref": receipt.event_id, "termination_reason": reason,
+            "questions": questions if questions is not None else state.get("questions", []),
+            "agent_outputs": (
+                agent_outputs if agent_outputs is not None else state.get("agent_outputs", [])
+            ),
+            "trace": self._trace(state, **trace_entry),
+        }
 
     def _wait_user(self, state):
         # This node has NO writes before or after interrupt; authority stays in resume().

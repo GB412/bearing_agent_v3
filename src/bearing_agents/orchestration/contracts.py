@@ -49,15 +49,36 @@ class ActionSpec:
     effect_class: str = "READ_ONLY"
     supported: bool = True
     version: str = "1"
+    supported_scopes: tuple[str, ...] = ("*",)
+    candidate_source: str | None = None
+    required_completed_actions: tuple[str, ...] = ()
+    prerequisite_failure_code: str = "PREREQUISITE_NOT_READY"
+    terminal: bool = False
 
 
+# The catalog is the trusted action registry: the planner may select an entry,
+# but cannot create executors, scopes, permissions, or side-effect classes.
 CATALOG = {
-    "clarify_requirement": ActionSpec("requirements_fake"),
-    "analyze_conditions": ActionSpec("conditions_fake", required_gate="R2"),
-    "generate_candidate": ActionSpec("design_fake", required_gate="R2"),
+    "clarify_requirement": ActionSpec("requirements_fake", terminal=True),
+    "analyze_conditions": ActionSpec(
+        "conditions_fake", required_gate="R2",
+        supported_scopes=("cylindrical_radial_hydrodynamic",),
+    ),
+    "generate_candidate": ActionSpec(
+        "design_fake", required_gate="R2", effect_class="CANDIDATE_PROPOSAL",
+        supported_scopes=("cylindrical_radial_hydrodynamic",),
+        candidate_source="design_agent",
+        required_completed_actions=("analyze_conditions",),
+        prerequisite_failure_code="ANALYSIS_NOT_READY",
+    ),
+    "precheck_candidate": ActionSpec(
+        "validation_agent", required_gate="R2",
+        supported_scopes=("cylindrical_radial_hydrodynamic",),
+        terminal=True,
+    ),
     "request_confirmation": ActionSpec("confirmation_gateway", effect_class="HUMAN_DECISION"),
-    "produce_summary": ActionSpec("summary_fake"),
-    "simulation_unavailable": ActionSpec("unavailable_stub"),
+    "produce_summary": ActionSpec("summary_fake", terminal=True),
+    "simulation_unavailable": ActionSpec("unavailable_stub", terminal=True),
     "run_simulation": ActionSpec("unavailable_stub", supported=False),
 }
 
@@ -89,6 +110,9 @@ class PlannerContext:
     """Small, trusted planning context assembled outside the model."""
 
     action_descriptions: tuple[tuple[str, str, str | None, bool], ...] = ()
+    action_scope_descriptions: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    action_terminal_descriptions: tuple[tuple[str, bool], ...] = ()
+    action_prerequisite_descriptions: tuple[tuple[str, tuple[str, ...]], ...] = ()
     recent_failures: tuple[str, ...] = ()
     # None means the caller did not supply a budget; zero means it is exhausted.
     remaining_steps: int | None = None
@@ -159,9 +183,17 @@ def task_plan_view(state: DesignState) -> dict:
 
 
 class FakePlanner:
+    def __init__(self, catalog: dict[str, ActionSpec] | None = None):
+        self.catalog = dict(CATALOG if catalog is None else catalog)
+
+    def bind_catalog(self, catalog: dict[str, ActionSpec]) -> None:
+        self.catalog = dict(catalog)
+
     def plan(self, summary: StateSummary) -> PlanDecision:
         if summary.goal == "simulation":
             action = "simulation_unavailable"
+        elif summary.goal == "precheck":
+            action = "precheck_candidate"
         elif summary.target_scope == "unknown":
             action = "clarify_requirement"
         elif not summary.supported_scope:
@@ -171,7 +203,11 @@ class FakePlanner:
             action = "request_confirmation"
         elif not summary.input_ready:
             action = "clarify_requirement"
-        elif summary.goal == "summary" or summary.candidate_ref:
+        elif summary.goal == "summary":
+            action = "produce_summary"
+        elif summary.candidate_ref and "precheck_candidate" not in summary.completed_actions:
+            action = "precheck_candidate"
+        elif summary.candidate_ref:
             action = "produce_summary"
         elif "analyze_conditions" not in summary.completed_actions:
             action = "analyze_conditions"
@@ -180,7 +216,7 @@ class FakePlanner:
         else:
             action = "produce_summary"
         return PlanDecision(
-            action=action, selected_agent=CATALOG[action].executor_id,
+            action=action, selected_agent=self.catalog[action].executor_id,
             rationale=f"State-driven offline {action}; missing={summary.missing_inputs}",
             expected_result="DEMO_ONLY workflow information, not engineering validation",
             requires_confirmation=action == "request_confirmation",
@@ -201,6 +237,8 @@ def policy_guard(
         reason = "EXECUTOR_MISMATCH"
     elif decision.state_version != state.state_version:
         reason = "STALE_VERSION"
+    elif "*" not in spec.supported_scopes and state.target_scope not in spec.supported_scopes:
+        reason = "UNSUPPORTED_SCOPE"
     elif spec.output_schema_id != "AgentResult/v1":
         reason = "SCHEMA_MISMATCH"
     elif any(ref not in state.parameters and not target_exists(state, ref)
@@ -208,14 +246,18 @@ def policy_guard(
         reason = "UNKNOWN_INPUT_REF"
     elif spec.required_gate and not readiness_check(state, spec.required_gate).ready:
         reason = "INPUT_NOT_READY"
-    elif spec.required_gate and state.target_scope != "cylindrical_radial_hydrodynamic":
-        reason = "UNSUPPORTED_SCOPE"
-    elif (decision.action == "generate_candidate"
-          and "analyze_conditions" not in fresh_completed_actions(state)):
-        # Demo-only predecessor. A future engineering Agent will require a
-        # traceable validated analysis result rather than only a task receipt.
-        reason = "ANALYSIS_NOT_READY"
-    elif spec.effect_class not in {"READ_ONLY", "HUMAN_DECISION"}:
+    elif any(
+        action not in fresh_completed_actions(state)
+        for action in spec.required_completed_actions
+    ):
+        # Requirements are supplied by the trusted ActionSpec, not embedded
+        # into the Supervisor. Completion must have a fresh task receipt.
+        reason = spec.prerequisite_failure_code
+    elif (decision.action == "precheck_candidate"
+          and not (target_ref and target_ref.startswith("candidate:")
+                   and target_exists(state, target_ref))):
+        reason = "MISSING_PRECHECK_TARGET"
+    elif spec.effect_class not in {"READ_ONLY", "CANDIDATE_PROPOSAL", "HUMAN_DECISION"}:
         reason = "PERMISSION_DENIED"
     elif (spec.effect_class == "HUMAN_DECISION" or decision.requires_confirmation) and not (
         target_exists(state, target_ref)
@@ -244,6 +286,11 @@ class FakeAgent:
             summary["message"] = "Design intent only; no engineering candidate or rule approval"
         if task.action == "simulation_unavailable":
             summary["simulation_status"] = "NOT_AVAILABLE"
+        if task.action == "precheck_candidate":
+            summary["message"] = "ValidationAgent was not registered; no validation performed"
+            return AgentResult(
+                task_id=task.id, status=AgentResultStatus.NEEDS_REVIEW, issues=[summary],
+            )
         return AgentResult(task_id=task.id, status=AgentResultStatus.SUCCESS, issues=[summary])
 
 
@@ -251,16 +298,25 @@ def validate_result(
     result: AgentResult,
     task_id: str,
     *,
-    allow_candidate_additions: bool = False,
+    effect_class: str = "READ_ONLY",
+    candidate_source: str | None = None,
+    allow_candidate_additions: bool | None = None,
 ) -> AgentResult:
+    # Keep the PR-02 helper argument readable for existing callers; Runtime
+    # now derives proposal permission exclusively from the trusted ActionSpec.
+    if allow_candidate_additions is not None:
+        effect_class = "CANDIDATE_PROPOSAL" if allow_candidate_additions else "READ_ONLY"
+        if allow_candidate_additions and candidate_source is None:
+            candidate_source = "design_agent"
     result = AgentResult.model_validate(result.model_dump())
     if result.task_id != task_id:
         raise ValueError("RESULT_TASK_MISMATCH")
     if result.state_patch is not None:
         patch = result.state_patch
-        if not allow_candidate_additions or len(patch.candidate_additions) != 1:
+        if effect_class != "CANDIDATE_PROPOSAL" or len(patch.candidate_additions) != 1:
             raise ValueError("DOMAIN_PATCH_NOT_ALLOWED")
-        if patch.source != "design_agent" or patch.actor is not None:
+        if (candidate_source is None or patch.source != candidate_source
+                or patch.actor is not None):
             raise ValueError("CANDIDATE_PATCH_SOURCE_MISMATCH")
         for field, value in patch.model_dump().items():
             if field not in {"candidate_additions", "source", "actor"} and value not in (
