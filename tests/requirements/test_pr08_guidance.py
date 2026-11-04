@@ -143,6 +143,7 @@ def test_bad_opted_in_model_does_not_get_trusted_fallback(tmp_path):
         tmp_path / "pr08-bad-runtime.sqlite",
         actor="designer",
         requirements_question_ranker=QuestionRanker(RankedStub(forged=True)),
+        max_same_action=10,
     ) as application:
         design = application.create_design()
         output = application.submit_turn(
