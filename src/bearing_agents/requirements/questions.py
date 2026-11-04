@@ -63,6 +63,18 @@ def build_view(
             "当前版本不支持对该轴承类型作专业设计承诺。",
         )
 
+    # An estimated value may not match a strict numeric extractor pattern.
+    # Ask for clarification without ever promoting it into a verified parameter.
+    if not unresolved and any(
+        tag in recent_text for tag in ("估计", "大约", "大概", "不确定")
+    ) and any(
+        field in recent_text for field in ("载荷", "轴径", "轴颈", "转速")
+    ):
+        ask(
+            "CLARIFY_INPUT",
+            "当前工况数值被描述为估计或不确定；请明确数值、单位和依据。",
+            "估计或未经核实的信息不能自动升级为确定性工程输入。",
+        )
     for reason in unresolved:
         ask(
             "CLARIFY_INPUT",
