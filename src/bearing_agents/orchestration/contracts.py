@@ -286,6 +286,11 @@ class FakeAgent:
             summary["message"] = "Design intent only; no engineering candidate or rule approval"
         if task.action == "simulation_unavailable":
             summary["simulation_status"] = "NOT_AVAILABLE"
+        if task.action == "precheck_candidate":
+            summary["message"] = "ValidationAgent was not registered; no validation performed"
+            return AgentResult(
+                task_id=task.id, status=AgentResultStatus.NEEDS_REVIEW, issues=[summary],
+            )
         return AgentResult(task_id=task.id, status=AgentResultStatus.SUCCESS, issues=[summary])
 
 
