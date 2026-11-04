@@ -30,10 +30,20 @@ def compare_candidates(first: CandidateDesign, second: CandidateDesign) -> Candi
     )
     reasons: list[str] = []
     reports = (first.precheck_report, second.precheck_report)
+    if any(item.completeness_status != "COMPLETE" for item in (first, second)):
+        reasons.append("Both candidates must be complete before engineering comparison.")
+    if first.input_dependency_refs != second.input_dependency_refs:
+        reasons.append("Candidate dependencies do not describe the same inputs.")
     if any(report is None for report in reports):
         reasons.append("Both candidates require persisted deterministic precheck reports.")
     else:
         a, b = reports
+        if (a.status != first.precheck_status or b.status != second.precheck_status
+                or a.candidate_id != first.candidate_id
+                or a.candidate_version != first.version
+                or b.candidate_id != second.candidate_id
+                or b.candidate_version != second.version):
+            reasons.append("Report status or candidate identity does not match.")
         if first.rule_set_version != second.rule_set_version:
             reasons.append("Rule-set versions differ.")
         if first.source_parameter_revisions != second.source_parameter_revisions:
