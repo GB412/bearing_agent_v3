@@ -52,6 +52,7 @@ class ActionSpec:
     supported_scopes: tuple[str, ...] = ("*",)
     candidate_source: str | None = None
     required_completed_actions: tuple[str, ...] = ()
+    prerequisite_failure_code: str = "PREREQUISITE_NOT_READY"
     terminal: bool = False
 
 
@@ -68,6 +69,7 @@ CATALOG = {
         supported_scopes=("cylindrical_radial_hydrodynamic",),
         candidate_source="design_agent",
         required_completed_actions=("analyze_conditions",),
+        prerequisite_failure_code="ANALYSIS_NOT_READY",
     ),
     "precheck_candidate": ActionSpec(
         "validation_agent", required_gate="R2",
@@ -250,7 +252,7 @@ def policy_guard(
     ):
         # Requirements are supplied by the trusted ActionSpec, not embedded
         # into the Supervisor. Completion must have a fresh task receipt.
-        reason = "PREREQUISITE_NOT_READY"
+        reason = spec.prerequisite_failure_code
     elif (decision.action == "precheck_candidate"
           and not (target_ref and target_ref.startswith("candidate:")
                    and target_exists(state, target_ref))):
