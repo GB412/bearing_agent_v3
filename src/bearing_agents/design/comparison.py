@@ -44,8 +44,8 @@ def compare_candidates(first: CandidateDesign, second: CandidateDesign) -> Candi
                 or b.candidate_id != second.candidate_id
                 or b.candidate_version != second.version):
             reasons.append("Report status or candidate identity does not match.")
-        if first.rule_set_version != second.rule_set_version:
-            reasons.append("Rule-set versions differ.")
+        if not first.rule_set_version or first.rule_set_version != second.rule_set_version:
+            reasons.append("A common reviewed rule-set version is required.")
         if first.source_parameter_revisions != second.source_parameter_revisions:
             reasons.append("Fixed engineering input revisions differ.")
         if first.input_constraint_revisions != second.input_constraint_revisions:
@@ -56,6 +56,18 @@ def compare_candidates(first: CandidateDesign, second: CandidateDesign) -> Candi
         ids_b = {item.get("rule_id") for item in b.checks}
         if not ids_a or ids_a != ids_b or None in ids_a:
             reasons.append("The two reports lack identical traceable rule coverage.")
+        if a.status not in {PrecheckStatus.PRECHECK_PASS, PrecheckStatus.PRECHECK_FAIL} or (
+            b.status not in {PrecheckStatus.PRECHECK_PASS, PrecheckStatus.PRECHECK_FAIL}
+        ):
+            reasons.append("A reviewed or unevaluated report cannot establish comparative safety.")
+        if a.status == PrecheckStatus.PRECHECK_PASS and any(
+            check.get("status") != "PASS" for check in a.checks
+        ):
+            reasons.append("First PASS report contains nonpassing checks.")
+        if b.status == PrecheckStatus.PRECHECK_PASS and any(
+            check.get("status") != "PASS" for check in b.checks
+        ):
+            reasons.append("Second PASS report contains nonpassing checks.")
         if a.rule_set_version != b.rule_set_version:
             reasons.append("Precheck reports used different rule sets.")
     evidence_refs = sorted({
