@@ -46,6 +46,20 @@ def test_known_width_allows_kinematic_pressure_indicator_without_safety_claim(re
     assert _steps(DesignAgent().build_strategy(state))["mean_pressure"].status == "DERIVED"
 
 
+def test_unverified_suggested_width_produces_only_a_provisional_indicator(ready):
+    from bearing_agents.domain.enums import ParameterRole, ParameterStatus
+    from bearing_agents.domain.parameters import ParameterRecord
+
+    state = ready.model_copy(deep=True)
+    state.parameters["bearing_width"] = ParameterRecord(
+        value=60, unit="mm",
+        role=ParameterRole.DESIGN_VARIABLE,
+        status=ParameterStatus.SUGGESTED,
+    )
+    steps = _steps(DesignAgent().build_strategy(state))
+    assert steps["mean_pressure"].status == "PROVISIONAL_DERIVATION"
+
+
 class StubAdvisor:
     def __init__(self, mode="good"):
         self.mode = mode
