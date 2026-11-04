@@ -211,6 +211,10 @@ class Runtime:
                 (name, spec.terminal)
                 for name, spec in sorted(self.catalog.items())
             ),
+            action_prerequisite_descriptions=tuple(
+                (name, spec.required_completed_actions)
+                for name, spec in sorted(self.catalog.items())
+            ),
             recent_failures=tuple(
                 str(row.get("reason") or row.get("error"))
                 for row in state.get("trace", [])
