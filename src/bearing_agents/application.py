@@ -9,6 +9,7 @@ from typing import Any
 
 from bearing_agents.core.state_manager import StateManager
 from bearing_agents.design.agent import DesignAgent
+from bearing_agents.design.comparison import CandidateComparison, compare_candidates
 from bearing_agents.domain.candidates import CandidatePrecheckReport
 from bearing_agents.knowledge.defaults import KnowledgeBase
 from bearing_agents.orchestration.registry import AgentRegistry, ToolRegistry
@@ -87,6 +88,22 @@ class BearingDesignApplication:
             "report": report,
             "state_version": self.manager.get_design(design_id).state_version,
         }
+
+    def compare_candidate_versions(
+        self,
+        design_id: str,
+        first_ref: str,
+        second_ref: str,
+    ) -> CandidateComparison:
+        """Compare only candidate versions retrieved from authoritative state."""
+        state = self.manager.get_design(design_id)
+        indexed = {
+            f"candidate:{item.candidate_id}@{item.version}": item
+            for item in state.candidate_designs
+        }
+        if first_ref not in indexed or second_ref not in indexed or first_ref == second_ref:
+            raise ValueError("Two distinct, existing candidate versions are required")
+        return compare_candidates(indexed[first_ref], indexed[second_ref])
 
     def recover(self, design_id: str) -> dict[str, Any]:
         return self.runtime.recover(design_id)
