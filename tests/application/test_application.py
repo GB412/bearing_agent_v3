@@ -101,3 +101,11 @@ def test_application_precheck_persists_the_exact_runtime_report(tmp_path):
     assert result["report"].status == PrecheckStatus.REVIEW_REQUIRED
     assert saved.precheck_status == PrecheckStatus.REVIEW_REQUIRED
     assert saved.precheck_report == result["report"]
+    assert result["diagnosis"].candidate_ref == (
+        f"candidate:{candidate.candidate_id}@{candidate.version}"
+    )
+    assert result["diagnosis"].precheck_status == PrecheckStatus.REVIEW_REQUIRED
+    assert any(
+        finding.kind == "RULE_COVERAGE_GAP"
+        for finding in result["diagnosis"].findings
+    )
