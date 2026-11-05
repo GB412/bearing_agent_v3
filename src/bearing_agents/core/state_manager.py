@@ -316,9 +316,9 @@ class StateManager:
         if engineering_digest(current) != command.expected_input_digest:
             raise VersionConflictError("Candidate inputs changed before commit")
         task = next((t for t in current.task_plan if t.id == command.task_id), None)
-        if (task is None or task.action != "generate_candidate"
+        if (task is None or task.action not in {"generate_candidate", "revise_candidate"}
             or task.status != TaskStatus.RUNNING):
-            raise StateManagerError("No matching RUNNING design task")
+            raise StateManagerError("No matching RUNNING candidate task")
         updated = current.model_copy(deep=True)
         self._append_candidates(updated, [candidate], context)
         for index, current_task in enumerate(updated.task_plan):
