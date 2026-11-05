@@ -6,7 +6,10 @@ from bearing_agents.core.unit_normalizer import UNITS, normalize
 from bearing_agents.domain.parameter_registry import ParameterSchemaRegistry
 from bearing_agents.requirements.contracts import RequirementProposal, VerifiedRequirement
 
-_CANONICAL_UNIT = {"journal_diameter":"mm","load":"N","rotational_speed":"rpm","bearing_width":"mm","radial_clearance":"mm"}
+_CANONICAL_UNIT = {
+    "journal_diameter": "mm", "load": "N", "rotational_speed": "rpm",
+    "bearing_width": "mm", "radial_clearance": "mm",
+}
 _SAFE_NUMBER = re.compile(r"(?<![\d.])\d+(?:\.\d+)?(?![\d.])")
 _NEGATED = ("不是", "不对", "不要", "并非", "错误", "错了", "改成", "改为", "更正")
 _UNCERTAIN = ("估计", "大约", "大概", "可能", "不确定", "左右", "约为", "猜")
