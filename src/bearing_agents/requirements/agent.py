@@ -7,7 +7,9 @@ from bearing_agents.domain.enums import AgentResultStatus
 from bearing_agents.domain.parameter_registry import ParameterSchemaRegistry
 from bearing_agents.domain.state import DesignState
 from bearing_agents.orchestration.registry import AgentContext
+from bearing_agents.requirements.contracts import Question
 from bearing_agents.requirements.questions import build_view
+from bearing_agents.validation.diagnosis import diagnose_precheck
 
 
 class RequirementsAgent:
@@ -48,7 +50,32 @@ class RequirementsAgent:
         if context is not None and "last_user_turn" in context.tools.available_tool_ids:
             recent_text = context.tools.call("last_user_turn", design_id=state.design_id)
         view = build_view(state, gate, recent_text=recent_text)
-        questions = view.questions
+        questions = list(view.questions)
+        if context is not None and context.target_ref:
+            candidate = next(
+                (item for item in state.candidate_designs
+                 if f"candidate:{item.candidate_id}@{item.version}" == context.target_ref),
+                None,
+            )
+            if candidate is not None and candidate.precheck_report is not None:
+                diagnosis = diagnose_precheck(state, candidate, candidate.precheck_report)
+                for finding in diagnosis.findings:
+                    if len(questions) >= 3:
+                        break
+                    if finding.kind not in {
+                        "MISSING_PARAMETER", "RULE_COVERAGE_GAP", "RULE_FAILURE",
+                    }:
+                        continue
+                    questions.append(Question(
+                        question_id=(
+                            f"{state.design_id}:{state.state_version}:{finding.finding_id}"
+                        ),
+                        reason_code=finding.kind,
+                        text=(
+                            f"设计校核需要进一步处理：{finding.message} "
+                            "请提供相应的设计条件或可靠专业依据。"
+                        )[:300],
+                    ))
         if self.question_ranker is not None and len(questions) > 1:
             questions = self.question_ranker.reorder(questions, view.guidance)
         return AgentResult(
