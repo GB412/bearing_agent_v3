@@ -10,6 +10,8 @@ from bearing_agents.domain.candidate_lifecycle import missing_design_variables
 from bearing_agents.domain.candidates import CandidateDesign
 from bearing_agents.domain.enums import (
     AgentResultStatus,
+    ConstraintOperator,
+    ConstraintSeverity,
     ParameterRole,
     ParameterStatus,
     RuleStatus,
@@ -19,11 +21,13 @@ from bearing_agents.domain.parameters import ParameterRecord
 from bearing_agents.domain.state import DesignState
 from bearing_agents.domain.tasks import engineering_digest
 from bearing_agents.knowledge.defaults import KnowledgeBase, build_default_knowledge_base
+from bearing_agents.orchestration.registry import AgentContext
 from bearing_agents.rules.engine import RuleEngine, RuleEvaluationStatus
 from bearing_agents.tools.engineering_calculator import (
     journal_surface_speed,
     projected_mean_pressure,
 )
+from bearing_agents.validation.diagnosis import diagnose_precheck
 
 
 class DesignAgent:
@@ -49,7 +53,33 @@ class DesignAgent:
             parameter_registry=self.parameters,
         )
 
-    def run(self, state: DesignState, task: TaskRecord) -> AgentResult:
+    def run(
+        self, state: DesignState, task: TaskRecord,
+        *, context: AgentContext | None = None,
+    ) -> AgentResult:
+        if task.action == "revise_candidate":
+            candidate, reason = self.revise_candidate(
+                state,
+                context.target_ref if context else None,
+                context.finding_ref if context else None,
+            )
+            return AgentResult(
+                task_id=task.id,
+                status=AgentResultStatus.SUCCESS if candidate else AgentResultStatus.NEEDS_REVIEW,
+                state_patch=(
+                    StatePatch(source="design_agent", candidate_additions=[candidate])
+                    if candidate else None
+                ),
+                issues=[{
+                    "action": "revise_candidate",
+                    "status": "PROPOSED" if candidate else "NEEDS_REVIEW",
+                    "reason": reason,
+                    "candidate_ref": (
+                        f"candidate:{candidate.candidate_id}@{candidate.version}"
+                        if candidate else None
+                    ),
+                }],
+            )
         if task.action == "analyze_conditions":
             analysis = self.analyze_conditions(state)
             status = (
@@ -88,6 +118,97 @@ class DesignAgent:
                 evidence_refs=proposal.evidence_refs,
             )
         raise ValueError(f"DesignAgent does not support action: {task.action}")
+
+    def revise_candidate(
+        self, state: DesignState, target_ref: str | None, finding_ref: str | None,
+    ) -> tuple[CandidateDesign | None, str]:
+        """One bounded repair using an approved user limit; never a solver optimum."""
+        candidate = next(
+            (item for item in state.candidate_designs
+             if f"candidate:{item.candidate_id}@{item.version}" == target_ref),
+            None,
+        )
+        if candidate is None or candidate.precheck_report is None or not finding_ref:
+            return None, "No persisted target precheck or selected finding."
+        diagnosis = diagnose_precheck(state, candidate, candidate.precheck_report)
+        finding = next(
+            (item for item in diagnosis.findings if item.finding_id == finding_ref),
+            None,
+        )
+        if (
+            finding is None or finding.kind != "RULE_FAILURE"
+            or finding.next_action != "REVIEW_DESIGN_VARIABLE"
+            or finding.parameter_id not in finding.adjustable_parameter_ids
+            or not finding_ref.startswith("check:")
+        ):
+            return None, "Finding is not an approved, adjustable rule failure."
+        try:
+            check = candidate.precheck_report.checks[int(finding_ref.split(":", 1)[1])]
+        except (IndexError, ValueError):
+            return None, "No matching check for the selected finding."
+        parameter_id = finding.parameter_id
+        rule_id = check.get("rule_id", "")
+        if not isinstance(rule_id, str) or not rule_id.startswith("constraint:"):
+            return None, "No supported evidence-bound numeric repair is available."
+        constraint = next(
+            (item for item in state.constraints
+             if f"constraint:{item.id}" == rule_id),
+            None,
+        )
+        if (
+            constraint is None or constraint.parameter != parameter_id
+            or constraint.origin != "user" or not constraint.approved
+            or constraint.severity != ConstraintSeverity.HARD
+            or constraint.operator not in {ConstraintOperator.LE, ConstraintOperator.GE}
+            or isinstance(constraint.target, bool)
+            or not isinstance(constraint.target, (int, float))
+        ):
+            return None, "No approved numeric hard bound is available for repair."
+        original = candidate.parameters.get(parameter_id)
+        locked = state.parameters.get(parameter_id)
+        if original is None or (
+            locked is not None and (
+                locked.status == ParameterStatus.CONFIRMED or locked.confirmed_by
+            )
+        ):
+            return None, "Target parameter is absent or user-locked."
+        try:
+            replacement = self.parameters.convert(
+                parameter_id, constraint.target, constraint.unit, original.unit,
+            )
+            self.parameters.validate(parameter_id, replacement, original.unit)
+        except ValueError:
+            return None, "The approved bound cannot be converted to this parameter."
+        if replacement == original.value:
+            return None, "The proposed repair makes no change."
+        updated = {
+            key: record.model_copy(deep=True)
+            for key, record in candidate.parameters.items()
+        }
+        updated[parameter_id] = ParameterRecord(
+            value=replacement,
+            unit=original.unit,
+            role=ParameterRole.DESIGN_VARIABLE,
+            status=ParameterStatus.SUGGESTED,
+            source="approved_user_bound",
+            source_ref=f"user-constraint:{constraint.id}@{constraint.revision}",
+        )
+        revised = CandidateDesign(
+            candidate_id=candidate.candidate_id,
+            version=candidate.version + 1,
+            parent_candidate_id=candidate.candidate_id,
+            parent_candidate_version=candidate.version,
+            parameters=updated,
+            assumptions=[
+                *candidate.assumptions,
+                "One variable adjusted to the approved user bound; "
+                "this does not establish overall engineering suitability.",
+            ],
+            rule_refs=sorted(set([
+                *candidate.rule_refs, f"constraint:{constraint.id}",
+            ])),
+        )
+        return revised, f"Changed {parameter_id} using approved constraint {constraint.id}."
 
     def analyze_conditions(self, state: DesignState) -> ConditionAnalysis:
         gate = readiness_for(

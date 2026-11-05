@@ -164,6 +164,7 @@ class AgentContext:
     target_ref: str | None
     input_refs: tuple[str, ...]
     tools: AgentToolbox
+    finding_ref: str | None = None
 
 
 class AgentRegistry:

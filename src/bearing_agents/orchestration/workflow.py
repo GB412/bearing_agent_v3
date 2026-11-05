@@ -115,6 +115,7 @@ class Runtime:
         return self._output(self.graph.invoke({
             "design_id": design_id, "thread_id": config["configurable"]["thread_id"],
             "run_id": str(uuid4()), "goal": goal, "target_ref": target_ref,
+            "finding_ref": None,
             "steps": 0, "errors": 0, "same_action_count": 0, "last_signature": "",
             "termination_reason": None, "confirmation": None, "trace": [],
             "current_task_id": "", "last_result_ref": "", "questions": [], "agent_outputs": [],
@@ -181,6 +182,7 @@ class Runtime:
             requires_confirmation=state.get("requires_confirmation", False),
             input_refs=state.get("input_refs", []),
             target_ref=state.get("target_ref"),
+            finding_ref=state.get("finding_ref"),
         )
 
     def _observe(self, state):
@@ -271,11 +273,14 @@ class Runtime:
                     "termination_reason": "INVALID_TARGET",
                     "trace": self._trace(state, stage="target_invalid"),
                 }
-        signature = fingerprint([decision.action, chosen_target, summary.input_digest])
+        signature = fingerprint([
+            decision.action, chosen_target, decision.finding_ref, summary.input_digest,
+        ])
         repeats = state["same_action_count"] + 1 if signature == state["last_signature"] else 1
         return {
             "action": decision.action, "executor": decision.selected_agent,
             "target_ref": chosen_target,
+            "finding_ref": decision.finding_ref,
             "rationale": decision.rationale, "decision_version": decision.state_version,
             "requires_confirmation": decision.requires_confirmation,
             "input_refs": decision.input_refs,
@@ -373,6 +378,29 @@ class Runtime:
                 "trace": self._trace(state, stage="task_started", task_id=task_id,
                                      domain_version=receipt.state_version)}
 
+    def _persist_design_precheck(self, state):
+        """Persist trusted evidence so the next planning turn sees actual findings."""
+        if state["goal"] != "design" or state["action"] != "precheck_candidate":
+            return
+        from bearing_agents.validation.agent import ValidationAgent
+        from bearing_agents.validation.service import ValidationService
+
+        agent = self.agent_registry.get(state["executor"])
+        if not isinstance(agent, ValidationAgent):
+            raise StateManagerError("Design loop needs a trusted ValidationAgent")
+        target = state.get("target_ref")
+        candidate = next(
+            (item for item in self.manager.get_design(state["design_id"]).candidate_designs
+             if f"candidate:{item.candidate_id}@{item.version}" == target),
+            None,
+        )
+        if candidate is None:
+            raise StateManagerError("Cannot persist an unknown candidate precheck")
+        if candidate.precheck_report is None:
+            ValidationService(self.manager, agent).assess(
+                state["design_id"], candidate.candidate_id, candidate.version,
+            )
+
     def _execute(self, state):
         domain = self.manager.get_design(state["design_id"])
         prior = next((e for e in domain.event_history if e.details.get("operation_id")
@@ -392,7 +420,10 @@ class Runtime:
                     state, "complete",
                     output_ref=f"demo:{state['current_task_id']}",
                 )
-            return self._completed(state, domain, receipt)
+            self._persist_design_precheck(state)
+            return self._completed(
+                state, self.manager.get_design(state["design_id"]), receipt,
+            )
         waited = any(e.details.get("operation_id") == f"{state['current_task_id']}:wait"
                      for e in domain.event_history)
         # Bookkeeping advanced the CAS version. Check the action AND engineering digest again.
@@ -430,6 +461,7 @@ class Runtime:
                 target_ref=state.get("target_ref"),
                 input_refs=tuple(state.get("input_refs", [])),
                 tools=self.tool_registry.for_agent(state["executor"]),
+                finding_ref=state.get("finding_ref"),
             )
             result = self.agent_registry.invoke(
                 state["executor"], domain.model_copy(deep=True), task.model_copy(deep=True),
@@ -521,9 +553,25 @@ class Runtime:
             return {"termination_reason": "VERSION_STALE",
                     "trace": self._trace(state, stage="task_blocked", task_id=task.id,
                                          reason="VERSION_STALE")}
-        return self._completed(state, domain, receipt, questions=public_questions,
-                               agent_outputs=public_outputs,
-                               agent_status=result.status.value, tool_calls=tool_calls)
+        try:
+            self._persist_design_precheck(state)
+        except (StateManagerError, ValueError) as exc:
+            return {
+                "termination_reason": "PRECHECK_PERSISTENCE_FAILED",
+                "errors": state["errors"] + 1,
+                "trace": self._trace(
+                    state, stage="precheck_persist_failed", reason=type(exc).__name__,
+                ),
+            }
+        output = self._completed(
+            state, self.manager.get_design(state["design_id"]), receipt,
+            questions=public_questions, agent_outputs=public_outputs,
+            agent_status=result.status.value, tool_calls=tool_calls,
+        )
+        if state["goal"] == "design" and result.state_patch is not None:
+            candidate = result.state_patch.candidate_additions[0]
+            output["target_ref"] = f"candidate:{candidate.candidate_id}@{candidate.version}"
+        return output
 
     def _completed(self, state, domain, receipt, *, questions=None, agent_outputs=None,
                    agent_status="SUCCESS", tool_calls=None):
@@ -539,6 +587,11 @@ class Runtime:
             reason = "INSUFFICIENT_RULES"
         elif agent_status == "NEEDS_REVIEW":
             reason = "NEEDS_REVIEW"
+        # Only the explicit continuous design goal follows a persisted precheck.
+        if state["goal"] == "design" and state["action"] in {
+            "generate_candidate", "precheck_candidate", "revise_candidate",
+        } and agent_status in {"SUCCESS", "NEEDS_REVIEW"}:
+            reason = None
         action_scopes = self.catalog[state["action"]].supported_scopes
         if domain.target_scope == "unsupported" or (
             domain.target_scope not in {"cylindrical_radial_hydrodynamic", "unknown"}

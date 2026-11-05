@@ -43,6 +43,7 @@ class PlanDecision(BaseModel):
     input_refs: list[str] = Field(default_factory=list)
     # Only a reference, not model authority: the runtime and Guard verify it.
     target_ref: str | None = None
+    finding_ref: str | None = None
     rationale: str
     expected_result: str
     requires_confirmation: bool = False
