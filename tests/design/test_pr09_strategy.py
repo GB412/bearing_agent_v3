@@ -92,11 +92,51 @@ def test_model_can_only_reorder_existing_steps_and_is_explicitly_unverified(read
     assert "model" not in strategy.available_rule_refs
 
 
-@pytest.mark.parametrize("mode", ["invent", "unsafe"])
-def test_model_cannot_invent_analysis_step_or_claim_engineering_safety(ready, mode):
-    agent = DesignAgent(strategy_advisor=StrategyAdvisor(StubAdvisor(mode)))
-    with pytest.raises(StrategyAdviceError):
+def test_model_cannot_invent_analysis_step(ready):
+    agent = DesignAgent(strategy_advisor=StrategyAdvisor(StubAdvisor("invent")))
+    with pytest.raises(StrategyAdviceError, match="STEP_IDS_NOT_ALLOWED"):
         agent.build_strategy(ready)
+
+
+def test_model_safety_claim_is_discarded_and_does_not_become_engineering_evidence(ready):
+    strategy = DesignAgent(
+        strategy_advisor=StrategyAdvisor(StubAdvisor("unsafe")),
+    ).build_strategy(ready)
+    assert "合格" not in strategy.unverified_advisory
+    assert "安全" not in strategy.unverified_advisory
+    assert "规则判定未改变" in strategy.unverified_advisory
+
+
+def test_strategy_advisor_accepts_chat_model_message_content_and_new_steps():
+    from types import SimpleNamespace
+
+    from bearing_agents.design.contracts import AnalysisStep
+
+    steps = [
+        AnalysisStep(step_id=f"test_step_{index}", status="NOT_EVALUATED", reason="fixture")
+        for index in range(8)
+    ]
+
+    class ChatModel:
+        def invoke(self, prompt):
+            ordered = [s["step_id"] for s in json.loads(prompt)["steps"]]
+            return SimpleNamespace(content=json.dumps({"ordered_step_ids": ordered[::-1]}))
+
+    ordered, note = StrategyAdvisor(ChatModel()).prioritize(steps, objective="test")
+    assert len(ordered) == 8
+    assert ordered[0].step_id == "test_step_7"
+    assert "未审核" in note
+
+
+def test_strategy_advisor_does_not_silently_fall_back_on_bad_json(ready):
+    class InvalidChatModel:
+        def invoke(self, prompt):
+            from types import SimpleNamespace
+            return SimpleNamespace(content="not json")
+
+    steps = DesignAgent().build_strategy(ready).analysis_steps
+    with pytest.raises(StrategyAdviceError, match="MODEL_OUTPUT_INVALID"):
+        StrategyAdvisor(InvalidChatModel()).prioritize(steps, objective="test")
 
 
 def test_no_prechecks_means_no_claim_of_optimization():
@@ -146,6 +186,18 @@ def test_candidate_precheck_comparison_requires_identical_evidence_and_completen
     invalidated = compare_candidates(passed, changed)
     assert invalidated.comparability == "INCOMPARABLE"
     assert invalidated.preferred_ref is None
+
+    different_report = failed.model_copy(deep=True)
+    different_report.precheck_report.input_digest = "other-input"
+    assert compare_candidates(passed, different_report).comparability == "INCOMPARABLE"
+
+    mismatched_rules = failed.model_copy(deep=True)
+    mismatched_rules.precheck_report.rule_set_version = "other-rule-version"
+    assert compare_candidates(passed, mismatched_rules).comparability == "INCOMPARABLE"
+
+    missing_failure = failed.model_copy(deep=True)
+    missing_failure.precheck_report.checks[0]["status"] = "PASS"
+    assert compare_candidates(passed, missing_failure).comparability == "INCOMPARABLE"
 
 
 def test_conflicting_stored_report_status_blocks_comparison():
