@@ -15,6 +15,18 @@ class ConditionAnalysis(BaseModel):
     cautions: list[str] = Field(default_factory=list)
 
 
+class AnalysisStep(BaseModel):
+    """A planning item, never a claim that a solver or expert rule has run."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    step_id: str
+    status: str
+    reason: str
+    required_inputs: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+
+
 class DesignStrategy(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     strategy_id: str
@@ -24,6 +36,9 @@ class DesignStrategy(BaseModel):
     available_rule_refs: list[str]
     unavailable_rule_refs: list[str]
     rationale: list[str]
+    analysis_steps: list[AnalysisStep] = Field(default_factory=list)
+    risk_questions: list[str] = Field(default_factory=list)
+    unverified_advisory: str | None = None
 
 
 class CandidateProposal(BaseModel):
