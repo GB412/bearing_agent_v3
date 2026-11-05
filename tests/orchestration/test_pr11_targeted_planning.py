@@ -10,7 +10,6 @@ from bearing_agents.domain.enums import ParameterRole, ParameterStatus, Precheck
 from bearing_agents.domain.parameters import ParameterRecord
 from bearing_agents.domain.tasks import engineering_digest
 from bearing_agents.domain.write_context import WriteContext, WriterKind
-from bearing_agents.orchestration.contracts import observe_state
 from bearing_agents.orchestration.llm_planner import LLMPlanner
 from bearing_agents.validation.service import ValidationService
 
