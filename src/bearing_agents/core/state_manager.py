@@ -583,7 +583,9 @@ class StateManager:
                             parameter_id, proposed.value, proposed.unit, locked.unit,
                         )
                     except ParameterSchemaError as exc:
-                        raise StateManagerError("Candidate conflicts with locked parameter") from exc
+                        raise StateManagerError(
+                            "Candidate conflicts with locked parameter"
+                        ) from exc
                     matches = math.isclose(
                         actual, locked.value, rel_tol=1e-9, abs_tol=1e-12,
                     )
