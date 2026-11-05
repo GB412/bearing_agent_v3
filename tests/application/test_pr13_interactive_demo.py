@@ -5,6 +5,7 @@ import builtins
 import pytest
 
 from bearing_agents.core.state_manager import StateManager
+from bearing_agents.orchestration.llm_planner import PlannerError
 from bearing_agents.domain.enums import ParameterRole
 from bearing_agents.infra.state_repository import SQLiteStateRepository
 from bearing_agents.requirements.extraction import extract
@@ -61,13 +62,13 @@ def test_cli_offline_dialogue_and_report(tmp_path, monkeypatch, capsys):
 
 def test_real_model_mode_never_implicitly_falls_back_to_fake(tmp_path, monkeypatch):
     monkeypatch.delenv("BEARING_LLM_ENABLED", raising=False)
-    with pytest.raises(ValueError, match="BEARING_LLM_ENABLED"):
+    with pytest.raises(PlannerError, match="BEARING_LLM_ENABLED"):
         main(["--llm", "--db", str(tmp_path / "unused.sqlite")])
     assert not (tmp_path / "unused.sqlite").exists()
 
 
-def test_report_is_explicit_about_unverified_professional_coverage():
-    manager = StateManager(SQLiteStateRepository(":memory:"))
+def test_report_is_explicit_about_unverified_professional_coverage(tmp_path):
+    manager = StateManager(SQLiteStateRepository(tmp_path / "report.sqlite"))
     state = manager.create_design()
     report = render_report(state)
     assert "ENGINEERING_DOMAIN_PENDING" in report
