@@ -101,8 +101,20 @@ class DesignAgent:
                 conflicts=[f"Unsupported V1 scope: {state.target_scope}"],
             )
         metrics = {}
-        diameter = state.parameters.get("journal_diameter")
-        speed = state.parameters.get("rotational_speed")
+
+        def trusted_input(key: str):
+            record = state.parameters.get(key)
+            if record is None or record.value is None:
+                return None
+            if record.status not in {ParameterStatus.PROVIDED, ParameterStatus.CONFIRMED}:
+                return None
+            if not (record.verified_source_ref or record.confirmed_by):
+                return None
+            self.parameters.validate_record(key, record)
+            return record
+
+        diameter = trusted_input("journal_diameter")
+        speed = trusted_input("rotational_speed")
         if diameter and speed and diameter.value is not None and speed.value is not None:
             metrics["surface_speed"] = {
                 "value": journal_surface_speed(
@@ -115,7 +127,7 @@ class DesignAgent:
                 "meaning": "Derived kinematic indicator, not a pass/fail limit.",
             }
         width = state.parameters.get("bearing_width")
-        load = state.parameters.get("load")
+        load = trusted_input("load")
         if (
             diameter
             and width
@@ -325,6 +337,12 @@ class DesignAgent:
                 continue
             for parameter_id, value in result.values.items():
                 if parameter_id not in self.DESIGN_VARIABLES or parameter_id in conflicted:
+                    continue
+                locked = state.parameters.get(parameter_id)
+                if locked is not None and (
+                    locked.status == ParameterStatus.CONFIRMED or locked.confirmed_by
+                ):
+                    # The planner must not silently replace a user's locked value.
                     continue
                 unit = result.units.get(parameter_id)
                 if unit is None:

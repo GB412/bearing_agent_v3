@@ -1,3 +1,4 @@
+import math
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -566,6 +567,34 @@ class StateManager:
                     self.parameter_registry.validate_record(parameter_id, record)
                 except ParameterSchemaError as exc:
                     raise StateManagerError(str(exc)) from exc
+            # Candidate proposals cannot silently contradict an authoritative
+            # user-locked value, even if the proposing agent is trusted.
+            for parameter_id, proposed in candidate.parameters.items():
+                locked = updated.parameters.get(parameter_id)
+                if locked is None or not (
+                    locked.status == ParameterStatus.CONFIRMED or locked.confirmed_by
+                ):
+                    continue
+                if isinstance(proposed.value, (int, float)) and not isinstance(
+                    proposed.value, bool
+                ):
+                    try:
+                        actual = self.parameter_registry.convert(
+                            parameter_id, proposed.value, proposed.unit, locked.unit,
+                        )
+                    except ParameterSchemaError as exc:
+                        raise StateManagerError(
+                            "Candidate conflicts with locked parameter"
+                        ) from exc
+                    matches = math.isclose(
+                        actual, locked.value, rel_tol=1e-9, abs_tol=1e-12,
+                    )
+                else:
+                    matches = proposed.value == locked.value
+                if not matches:
+                    raise StateManagerError(
+                        f"Candidate conflicts with locked parameter: {parameter_id}"
+                    )
             known_versions = [
                 item.version for item in updated.candidate_designs
                 if item.candidate_id == candidate.candidate_id

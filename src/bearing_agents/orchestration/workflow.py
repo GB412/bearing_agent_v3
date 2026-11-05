@@ -180,6 +180,7 @@ class Runtime:
             state_version=state["decision_version"],
             requires_confirmation=state.get("requires_confirmation", False),
             input_refs=state.get("input_refs", []),
+            target_ref=state.get("target_ref"),
         )
 
     def _observe(self, state):
@@ -247,10 +248,34 @@ class Runtime:
                         error=getattr(exc, "reason_code", type(exc).__name__),
                         **self._planner_audit(),
                     )}
-        signature = fingerprint([decision.action, summary.input_digest])
+        # User-supplied targets take precedence; model targets must refer to
+        # an existing candidate. The one-candidate default is unambiguous.
+        chosen_target = state.get("target_ref")
+        if decision.target_ref is not None:
+            if chosen_target is not None and chosen_target != decision.target_ref:
+                return {
+                    "termination_reason": "TARGET_CONFLICT",
+                    "trace": self._trace(state, stage="target_conflict"),
+                }
+            chosen_target = decision.target_ref
+        if decision.action == "precheck_candidate":
+            if chosen_target is None and len(summary.candidate_refs) == 1:
+                chosen_target = summary.candidate_refs[0]
+            if chosen_target is None and len(summary.candidate_refs) > 1:
+                return {
+                    "termination_reason": "TARGET_SELECTION_REQUIRED",
+                    "trace": self._trace(state, stage="target_ambiguous"),
+                }
+            if chosen_target is not None and not target_exists(domain, chosen_target):
+                return {
+                    "termination_reason": "INVALID_TARGET",
+                    "trace": self._trace(state, stage="target_invalid"),
+                }
+        signature = fingerprint([decision.action, chosen_target, summary.input_digest])
         repeats = state["same_action_count"] + 1 if signature == state["last_signature"] else 1
         return {
             "action": decision.action, "executor": decision.selected_agent,
+            "target_ref": chosen_target,
             "rationale": decision.rationale, "decision_version": decision.state_version,
             "requires_confirmation": decision.requires_confirmation,
             "input_refs": decision.input_refs,

@@ -61,7 +61,7 @@ class ActionSpec:
 CATALOG = {
     "clarify_requirement": ActionSpec("requirements_fake", terminal=True),
     "analyze_conditions": ActionSpec(
-        "conditions_fake", required_gate="R2",
+        "conditions_fake",
         supported_scopes=("cylindrical_radial_hydrodynamic",),
     ),
     "generate_candidate": ActionSpec(
@@ -103,6 +103,9 @@ class StateSummary:
     target_ref: str | None
     goal: str
     target_scope: str = "cylindrical_radial_hydrodynamic"
+    candidate_refs: tuple[str, ...] = ()
+    latest_precheck_status: str | None = None
+    recent_findings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -162,12 +165,31 @@ def observe_state(
     digest = engineering_digest(state)
     done = fresh_completed_actions(state)
     candidate = state.candidate_designs[-1] if state.candidate_designs else None
+    candidate_refs = tuple(
+        f"candidate:{item.candidate_id}@{item.version}"
+        for item in state.candidate_designs
+    )
+    findings = ()
+    if candidate is not None and candidate.precheck_report is not None:
+        from bearing_agents.validation.diagnosis import diagnose_precheck
+
+        findings = tuple(
+            f"{finding.finding_id}: {finding.message}"
+            for finding in diagnose_precheck(
+                state, candidate, candidate.precheck_report,
+            ).findings[:3]
+        )
     return StateSummary(
         state.state_version, digest, gate.ready,
         tuple(p.parameter_id for p in gate.missing),
         state.target_scope == "cylindrical_radial_hydrodynamic", done,
         f"candidate:{candidate.candidate_id}@{candidate.version}" if candidate else None,
         target_ref, goal, state.target_scope,
+        candidate_refs=candidate_refs,
+        latest_precheck_status=(
+            candidate.precheck_status.value if candidate else None
+        ),
+        recent_findings=findings,
     )
 
 
@@ -221,6 +243,11 @@ class FakePlanner:
             expected_result="DEMO_ONLY workflow information, not engineering validation",
             requires_confirmation=action == "request_confirmation",
             state_version=summary.domain_version,
+            target_ref=(
+                summary.target_ref or summary.candidate_refs[0]
+                if action == "precheck_candidate" and len(summary.candidate_refs) == 1
+                else summary.target_ref
+            ),
         )
 
 
@@ -253,6 +280,8 @@ def policy_guard(
         # Requirements are supplied by the trusted ActionSpec, not embedded
         # into the Supervisor. Completion must have a fresh task receipt.
         reason = spec.prerequisite_failure_code
+    elif decision.target_ref and target_ref != decision.target_ref:
+        reason = "TARGET_MISMATCH"
     elif (decision.action == "precheck_candidate"
           and not (target_ref and target_ref.startswith("candidate:")
                    and target_exists(state, target_ref))):

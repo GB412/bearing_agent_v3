@@ -41,13 +41,28 @@ class ValidationService:
     ) -> CandidatePrecheckReport:
         """Persist an already computed, evidence-bound report through StateManager."""
         state = self.manager.get_design(design_id)
+        candidate = next(
+            (
+                item for item in state.candidate_designs
+                if item.candidate_id == report.candidate_id
+                and item.version == report.candidate_version
+            ),
+            None,
+        )
+        if candidate is None:
+            raise ValueError("Precheck target does not exist")
+        # Model and runtime outputs are data, not authority. Re-evaluate every
+        # submitted report using the trusted deterministic validator.
+        verified = self.agent.evaluate(state, candidate)
+        if report.model_dump(mode="json") != verified.model_dump(mode="json"):
+            raise ValueError("Precheck report differs from trusted evaluation")
         self.manager.record_candidate_precheck(
             design_id,
             state.state_version,
-            report,
+            verified,
             context=WriteContext(kind=WriterKind.SYSTEM, actor="validation-service"),
         )
-        return report
+        return verified
 
     def diagnose(
         self,
