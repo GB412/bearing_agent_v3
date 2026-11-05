@@ -83,9 +83,13 @@ class BearingDesignApplication:
             )
         report = CandidatePrecheckReport.model_validate(outputs[-1])
         self.validation_service.persist_report(design_id, report)
+        diagnosis = self.validation_service.diagnose(
+            design_id, report.candidate_id, report.candidate_version,
+        )
         return {
             "execution": execution,
             "report": report,
+            "diagnosis": diagnosis,
             "state_version": self.manager.get_design(design_id).state_version,
         }
 
