@@ -3,8 +3,8 @@
 from bearing_agents.core.state_manager import StateManager
 from bearing_agents.domain.candidates import CandidatePrecheckReport
 from bearing_agents.domain.write_context import WriteContext, WriterKind
-from bearing_agents.validation.diagnosis import ValidationDiagnosis, diagnose_precheck
 from bearing_agents.validation.agent import ValidationAgent
+from bearing_agents.validation.diagnosis import ValidationDiagnosis, diagnose_precheck
 
 
 class ValidationService:
