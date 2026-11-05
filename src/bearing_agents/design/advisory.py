@@ -1,6 +1,7 @@
-"""Optional model chooses order of already declared engineering analysis tasks.
+"""Optional model prioritizes only the analysis steps supplied by the host.
 
-A model cannot change applicability, rule status, numeric values or candidate state.
+The model cannot alter applicability, values, rule statuses or engineering results.
+Its free-form explanation is intentionally not displayed as a technical conclusion.
 """
 
 import json
@@ -12,18 +13,18 @@ from bearing_agents.design.contracts import AnalysisStep
 
 
 class StrategyAdviceError(ValueError):
-    """Controlled error when an opted-in strategy model breaks its output contract."""
+    """An opted-in strategy model violated its structured-output contract."""
 
 
 class StrategyRankingProposal(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    ordered_step_ids: list[str] = Field(min_length=1, max_length=6)
-    explanation: str = Field(min_length=1, max_length=500)
+    ordered_step_ids: list[str] = Field(min_length=1)
+    explanation: str | None = Field(default=None, max_length=500)
 
 
 class StrategyAdvisor:
-    """Return a reordered analysis plan plus a clearly non-authoritative explanation."""
+    """Allow the model to reorder steps, but never authorize engineering claims."""
 
     def __init__(self, model: Any):
         if not callable(getattr(model, "invoke", None)):
@@ -34,11 +35,13 @@ class StrategyAdvisor:
         self, steps: list[AnalysisStep], *, objective: str,
     ) -> tuple[list[AnalysisStep], str]:
         originals = {item.step_id: item for item in steps}
+        if len(originals) != len(steps):
+            raise StrategyAdviceError("DUPLICATE_STEP_IDS")
         prompt = {
             "task": (
-                "Sort ONLY provided step IDs to prioritize analysis. Do not compute numbers, "
-                "assert a PASS/FAIL judgment, or claim a solver was executed. "
-                "All statuses are fixed by the host."
+                "Return JSON with ordered_step_ids containing precisely the provided "
+                "step IDs once each. You may prioritize, but cannot add tasks, "
+                "change engineering statuses or claim numerical/solver results."
             ),
             "objective_text_unverified": objective[:500],
             "steps": [item.model_dump(mode="json") for item in steps],
@@ -49,6 +52,8 @@ class StrategyAdvisor:
                 if output.get("parsing_error") is not None:
                     raise StrategyAdviceError("MODEL_OUTPUT_INVALID")
                 output = output["parsed"]
+            if hasattr(output, "content") and not isinstance(output, (str, dict)):
+                output = output.content
             if isinstance(output, str):
                 output = json.loads(output)
             proposal = StrategyRankingProposal.model_validate(output)
@@ -59,12 +64,7 @@ class StrategyAdvisor:
         ids = proposal.ordered_step_ids
         if len(ids) != len(set(ids)) or set(ids) != set(originals):
             raise StrategyAdviceError("STEP_IDS_NOT_ALLOWED")
-        # Do not allow model-generated quantitative or authoritative judgments.
-        banned = ("合格", "不合格", "安全", "超限", "pass", "fail", "safe")
-        explanation = proposal.explanation.strip()
-        if any(ch.isdigit() for ch in explanation) or any(
-            term in explanation.lower() for term in banned
-        ):
-            raise StrategyAdviceError("UNSUPPORTED_ENGINEERING_ASSERTION")
-        note = "未审核模型建议（仅影响分析顺序）： " + explanation
+        # Ignore any model-authored prose. Only the order is considered,
+        # and all step details are retained verbatim from the trusted host.
+        note = "未审核模型建议：仅调整分析步骤顺序；工程状态、数值与规则判定未改变。"
         return [originals[key] for key in ids], note
