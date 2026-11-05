@@ -6,7 +6,7 @@ from bearing_agents.core.unit_normalizer import UNITS, normalize
 from bearing_agents.domain.parameter_registry import ParameterSchemaRegistry
 from bearing_agents.requirements.contracts import RequirementProposal, VerifiedRequirement
 
-_CANONICAL_UNIT = {"journal_diameter":"mm","load":"N","rotational_speed":"rpm","bearing_width":"mm"}
+_CANONICAL_UNIT = {"journal_diameter":"mm","load":"N","rotational_speed":"rpm","bearing_width":"mm","radial_clearance":"mm"}
 _SAFE_NUMBER = re.compile(r"(?<![\d.])\d+(?:\.\d+)?(?![\d.])")
 _NEGATED = ("不是", "不对", "不要", "并非", "错误", "错了", "改成", "改为", "更正")
 _UNCERTAIN = ("估计", "大约", "大概", "可能", "不确定", "左右", "约为", "猜")
@@ -67,12 +67,17 @@ def verify(text: str, proposal: RequirementProposal, registry: ParameterSchemaRe
             return decision("CLARIFY", "CONSTRAINT_UNSUPPORTED")
         if not any(p in quote for p in ("不超过","不能超过","小于等于","≤")):
             return decision("REJECT","CONSTRAINT_SEMANTICS_MISMATCH")
-    elif proposal.field_id not in {"journal_diameter","load","rotational_speed"}:
+    elif proposal.field_id not in {
+        "journal_diameter", "load", "rotational_speed",
+        "bearing_width", "radial_clearance",
+    }:
         return decision("CLARIFY","UNKNOWN_INPUT_FIELD")
     else:
         tokens={"journal_diameter":("轴径","轴颈直径","D="),
                 "load":("载荷","F="),
-                "rotational_speed":("转速","n=")}[proposal.field_id]
+                "rotational_speed":("转速","n="),
+                "bearing_width":("轴承宽度", "宽度"),
+                "radial_clearance":("径向间隙", "半径间隙")}[proposal.field_id]
         if not any(t in quote for t in tokens):
             return decision("REJECT","FIELD_MISMATCH")
     nums=_SAFE_NUMBER.findall(quote)
