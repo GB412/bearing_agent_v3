@@ -115,6 +115,7 @@ class Runtime:
         return self._output(self.graph.invoke({
             "design_id": design_id, "thread_id": config["configurable"]["thread_id"],
             "run_id": str(uuid4()), "goal": goal, "target_ref": target_ref,
+            "finding_ref": None,
             "steps": 0, "errors": 0, "same_action_count": 0, "last_signature": "",
             "termination_reason": None, "confirmation": None, "trace": [],
             "current_task_id": "", "last_result_ref": "", "questions": [], "agent_outputs": [],
@@ -181,6 +182,7 @@ class Runtime:
             requires_confirmation=state.get("requires_confirmation", False),
             input_refs=state.get("input_refs", []),
             target_ref=state.get("target_ref"),
+            finding_ref=state.get("finding_ref"),
         )
 
     def _observe(self, state):
@@ -271,11 +273,14 @@ class Runtime:
                     "termination_reason": "INVALID_TARGET",
                     "trace": self._trace(state, stage="target_invalid"),
                 }
-        signature = fingerprint([decision.action, chosen_target, summary.input_digest])
+        signature = fingerprint([
+            decision.action, chosen_target, decision.finding_ref, summary.input_digest,
+        ])
         repeats = state["same_action_count"] + 1 if signature == state["last_signature"] else 1
         return {
             "action": decision.action, "executor": decision.selected_agent,
             "target_ref": chosen_target,
+            "finding_ref": decision.finding_ref,
             "rationale": decision.rationale, "decision_version": decision.state_version,
             "requires_confirmation": decision.requires_confirmation,
             "input_refs": decision.input_refs,
@@ -430,6 +435,7 @@ class Runtime:
                 target_ref=state.get("target_ref"),
                 input_refs=tuple(state.get("input_refs", [])),
                 tools=self.tool_registry.for_agent(state["executor"]),
+                finding_ref=state.get("finding_ref"),
             )
             result = self.agent_registry.invoke(
                 state["executor"], domain.model_copy(deep=True), task.model_copy(deep=True),
