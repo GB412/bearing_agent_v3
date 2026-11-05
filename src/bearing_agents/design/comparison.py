@@ -81,7 +81,7 @@ def compare_candidates(first: CandidateDesign, second: CandidateDesign) -> Candi
             reasons.append("Precheck report rule versions do not match their candidates.")
         if (
             any(
-                item.status == PrecheckStatus.PRECHECK_FAIL
+                item.precheck_status == PrecheckStatus.PRECHECK_FAIL
                 and not any(check.get("status") == "FAIL" for check in report.checks)
                 for item, report in ((first, a), (second, b))
             )
