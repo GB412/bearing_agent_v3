@@ -187,9 +187,15 @@ def test_candidate_precheck_comparison_requires_identical_evidence_and_completen
     assert invalidated.comparability == "INCOMPARABLE"
     assert invalidated.preferred_ref is None
 
+    # Full engineering_digest includes candidates and precheck state. The
+    # reports may differ while the fixed-input/constraint dependency refs match.
     different_report = failed.model_copy(deep=True)
-    different_report.precheck_report.input_digest = "other-input"
-    assert compare_candidates(passed, different_report).comparability == "INCOMPARABLE"
+    different_report.precheck_report.input_digest = "other-state-snapshot"
+    assert compare_candidates(passed, different_report).comparability == "COMPARABLE"
+
+    missing_digest = failed.model_copy(deep=True)
+    missing_digest.precheck_report.input_digest = ""
+    assert compare_candidates(passed, missing_digest).comparability == "INCOMPARABLE"
 
     mismatched_rules = failed.model_copy(deep=True)
     mismatched_rules.precheck_report.rule_set_version = "other-rule-version"
