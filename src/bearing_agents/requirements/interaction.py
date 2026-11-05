@@ -99,7 +99,11 @@ class InteractionService:
                     continue
                 changes[p.field_id]={
                     "value":v.normalized_value,"unit":v.normalized_unit,
-                    "role":ParameterRole.FIXED_INPUT,"status":ParameterStatus.PROVIDED,
+                    "role":(
+                        ParameterRole.DESIGN_VARIABLE
+                        if p.field_id in {"bearing_width", "radial_clearance"}
+                        else ParameterRole.FIXED_INPUT
+                    ),"status":ParameterStatus.PROVIDED,
                     "source":"user","source_ref":message.message_id,
                 }
             elif p.kind=="scope":

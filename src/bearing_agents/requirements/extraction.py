@@ -14,6 +14,10 @@ _PATTERNS = (
      rf"(?:轴径|轴颈直径|D\s*=)\s*[:：=]?\s*{_NUM}\s*(mm|毫米|m|米)(?![A-Za-z])"),
     ("load", rf"(?:径向载荷|轴承载荷|载荷|F\s*=)\s*[:：=]?\s*{_NUM}\s*(kN|N)(?![A-Za-z])"),
     ("rotational_speed", rf"(?:转速|n\s*=)\s*[:：=]?\s*{_NUM}\s*(r/min|rpm)(?![A-Za-z])"),
+    ("bearing_width",
+     rf"(?:轴承宽度|(?<!安装)宽度)\s*(?:为|是|=|:|：)?\s*{_NUM}\s*(mm|毫米|m|米)(?![A-Za-z])"),
+    ("radial_clearance",
+     rf"(?:径向间隙|半径间隙)\s*(?:为|是|=|:|：)?\s*{_NUM}\s*(mm|毫米|m|米)(?![A-Za-z])"),
 )
 _SCOPE_UNSUPPORTED = ("滚动轴承", "球轴承", "圆锥滚子", "滚子轴承", "可倾瓦", "静压轴承")
 _SCOPE_SUPPORTED = ("圆柱径向动压", "径向动压滑动轴承", "圆柱滑动轴承")
@@ -37,7 +41,10 @@ def extract(text: str) -> list[RequirementProposal]:
                 kind="parameter", field_id=field, quote=quote,
                 start=match.start(), end=match.end(),
                 value=float(match.group(1)), unit=unit,
-                modality=modality, role="FIXED_INPUT",
+                modality=modality,
+                role=("DESIGN_VARIABLE" if field in {
+                    "bearing_width", "radial_clearance",
+                } else "FIXED_INPUT"),
             ))
     for keyword in _SCOPE_UNSUPPORTED:
         at=text.find(keyword)
