@@ -20,6 +20,7 @@ class GraphState(TypedDict, total=False):
     run_id: str
     goal: str
     target_ref: str | None
+    finding_ref: str | None
     observed_domain_version: int
     input_digest: str
     action: str
@@ -76,6 +77,11 @@ CATALOG = {
         supported_scopes=("cylindrical_radial_hydrodynamic",),
         terminal=True,
     ),
+    "revise_candidate": ActionSpec(
+        "design_fake", required_gate="R2", effect_class="CANDIDATE_PROPOSAL",
+        supported_scopes=("cylindrical_radial_hydrodynamic",),
+        candidate_source="design_agent",
+    ),
     "request_confirmation": ActionSpec("confirmation_gateway", effect_class="HUMAN_DECISION"),
     "produce_summary": ActionSpec("summary_fake", terminal=True),
     "simulation_unavailable": ActionSpec("unavailable_stub", terminal=True),
@@ -106,6 +112,7 @@ class StateSummary:
     candidate_refs: tuple[str, ...] = ()
     latest_precheck_status: str | None = None
     recent_findings: tuple[str, ...] = ()
+    actionable_finding_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -170,15 +177,21 @@ def observe_state(
         for item in state.candidate_designs
     )
     findings = ()
+    actionable = ()
     if candidate is not None and candidate.precheck_report is not None:
         from bearing_agents.validation.diagnosis import diagnose_precheck
 
+        diagnosis = diagnose_precheck(state, candidate, candidate.precheck_report)
         findings = tuple(
             f"{finding.finding_id}: {finding.message}"
-            for finding in diagnose_precheck(
-                state, candidate, candidate.precheck_report,
-            ).findings[:3]
+            for finding in diagnosis.findings[:3]
         )
+        actionable = tuple(
+            finding.finding_id
+            for finding in diagnosis.findings
+            if finding.next_action == "REVIEW_DESIGN_VARIABLE"
+            and finding.adjustable_parameter_ids
+        )[:3]
     return StateSummary(
         state.state_version, digest, gate.ready,
         tuple(p.parameter_id for p in gate.missing),
@@ -190,6 +203,7 @@ def observe_state(
             candidate.precheck_status.value if candidate else None
         ),
         recent_findings=findings,
+        actionable_finding_refs=actionable,
     )
 
 
@@ -227,6 +241,18 @@ class FakePlanner:
             action = "clarify_requirement"
         elif summary.goal == "summary":
             action = "produce_summary"
+        elif summary.goal == "design" and summary.candidate_ref:
+            if summary.latest_precheck_status == "NOT_EVALUATED":
+                action = "precheck_candidate"
+            elif (
+                summary.latest_precheck_status == "PRECHECK_FAIL"
+                and summary.actionable_finding_refs
+            ):
+                action = "revise_candidate"
+            elif summary.latest_precheck_status in {"PRECHECK_FAIL", "REVIEW_REQUIRED"}:
+                action = "clarify_requirement"
+            else:
+                action = "produce_summary"
         elif summary.candidate_ref and "precheck_candidate" not in summary.completed_actions:
             action = "precheck_candidate"
         elif summary.candidate_ref:
@@ -245,8 +271,16 @@ class FakePlanner:
             state_version=summary.domain_version,
             target_ref=(
                 summary.target_ref or summary.candidate_refs[0]
-                if action == "precheck_candidate" and len(summary.candidate_refs) == 1
-                else summary.target_ref
+                if action in {"precheck_candidate", "revise_candidate"}
+                and len(summary.candidate_refs) == 1
+                else summary.target_ref or (
+                    summary.candidate_ref if action == "revise_candidate" else None
+                )
+            ),
+            finding_ref=(
+                summary.actionable_finding_refs[0]
+                if action == "revise_candidate" and summary.actionable_finding_refs
+                else None
             ),
         )
 
@@ -282,10 +316,29 @@ def policy_guard(
         reason = spec.prerequisite_failure_code
     elif decision.target_ref and target_ref != decision.target_ref:
         reason = "TARGET_MISMATCH"
-    elif (decision.action == "precheck_candidate"
+    elif (decision.action in {"precheck_candidate", "revise_candidate"}
           and not (target_ref and target_ref.startswith("candidate:")
                    and target_exists(state, target_ref))):
         reason = "MISSING_PRECHECK_TARGET"
+    elif decision.action == "revise_candidate":
+        from bearing_agents.validation.diagnosis import diagnose_precheck
+
+        candidate = next(
+            (item for item in state.candidate_designs
+             if f"candidate:{item.candidate_id}@{item.version}" == target_ref),
+            None,
+        )
+        if candidate is None or candidate.precheck_report is None:
+            reason = "REVISION_REQUIRES_PRECHECK"
+        else:
+            diagnosis = diagnose_precheck(state, candidate, candidate.precheck_report)
+            available = {
+                finding.finding_id for finding in diagnosis.findings
+                if finding.next_action == "REVIEW_DESIGN_VARIABLE"
+                and finding.adjustable_parameter_ids
+            }
+            if decision.finding_ref not in available:
+                reason = "INVALID_REVISION_FINDING"
     elif spec.effect_class not in {"READ_ONLY", "CANDIDATE_PROPOSAL", "HUMAN_DECISION"}:
         reason = "PERMISSION_DENIED"
     elif (spec.effect_class == "HUMAN_DECISION" or decision.requires_confirmation) and not (
