@@ -3,14 +3,14 @@
 import builtins
 
 import pytest
+from examples.interactive_design import main, render_report
 
 from bearing_agents.core.state_manager import StateManager
-from bearing_agents.orchestration.llm_planner import PlannerError
 from bearing_agents.domain.enums import ParameterRole
 from bearing_agents.infra.state_repository import SQLiteStateRepository
+from bearing_agents.orchestration.llm_planner import PlannerError
 from bearing_agents.requirements.extraction import extract
 from bearing_agents.requirements.interaction import InteractionService
-from examples.interactive_design import main, render_report
 
 
 def test_natural_language_design_width_is_verified_but_width_limit_is_constraint(tmp_path):
