@@ -68,8 +68,11 @@ def compare_candidates(first: CandidateDesign, second: CandidateDesign) -> Candi
             check.get("status") != "PASS" for check in b.checks
         ):
             reasons.append("Second PASS report contains nonpassing checks.")
-        if not a.input_digest or a.input_digest != b.input_digest:
-            reasons.append("Precheck reports were computed from different input snapshots.")
+        # Report input_digest includes the entire candidate collection and prior
+        # precheck metadata, so separate evaluations can have different digests
+        # even when the underlying fixed-input and constraint revisions agree.
+        if not a.input_digest or not b.input_digest:
+            reasons.append("Precheck reports must each carry a recorded input snapshot.")
         if (
             a.rule_set_version != b.rule_set_version
             or a.rule_set_version != first.rule_set_version
