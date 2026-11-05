@@ -2,12 +2,10 @@
 
 import pytest
 
-from bearing_agents.core.state_manager import StateManager
 from bearing_agents.domain.agent_protocols import StatePatch
 from bearing_agents.domain.candidates import CandidateDesign, CandidatePrecheckReport
 from bearing_agents.domain.enums import ParameterRole, ParameterStatus, PrecheckStatus
 from bearing_agents.domain.parameters import ParameterRecord
-from bearing_agents.infra.state_repository import SQLiteStateRepository
 from bearing_agents.validation.diagnosis import diagnose_precheck
 from bearing_agents.validation.service import ValidationService
 
