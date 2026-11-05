@@ -42,6 +42,7 @@ class CandidateDesign(BaseModel):
     candidate_id: str
     version: int = Field(ge=1)
     parent_candidate_id: str | None = None
+    parent_candidate_version: int | None = Field(default=None, ge=1)
     parameters: dict[str, ParameterRecord] = Field(default_factory=dict)
     assumptions: list[str] = Field(default_factory=list)
     source_parameter_revisions: dict[str, int] = Field(default_factory=dict)
