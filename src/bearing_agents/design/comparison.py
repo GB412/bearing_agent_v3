@@ -68,8 +68,22 @@ def compare_candidates(first: CandidateDesign, second: CandidateDesign) -> Candi
             check.get("status") != "PASS" for check in b.checks
         ):
             reasons.append("Second PASS report contains nonpassing checks.")
-        if a.rule_set_version != b.rule_set_version:
-            reasons.append("Precheck reports used different rule sets.")
+        if not a.input_digest or a.input_digest != b.input_digest:
+            reasons.append("Precheck reports were computed from different input snapshots.")
+        if (
+            a.rule_set_version != b.rule_set_version
+            or a.rule_set_version != first.rule_set_version
+            or b.rule_set_version != second.rule_set_version
+        ):
+            reasons.append("Precheck report rule versions do not match their candidates.")
+        if (
+            any(
+                item.status == PrecheckStatus.PRECHECK_FAIL
+                and not any(check.get("status") == "FAIL" for check in report.checks)
+                for item, report in ((first, a), (second, b))
+            )
+        ):
+            reasons.append("A failed precheck lacks a traceable failing check.")
     evidence_refs = sorted({
         ref for report in reports if report is not None
         for ref in report.evidence_refs
