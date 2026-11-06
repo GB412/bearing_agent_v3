@@ -2,6 +2,8 @@
 
 import builtins
 
+import pytest
+
 from bearing_agents.application import open_application
 from bearing_agents.core.state_manager import StateManager
 from bearing_agents.infra.state_repository import SQLiteStateRepository
@@ -9,7 +11,7 @@ from bearing_agents.knowledge.defaults import build_default_knowledge_base
 from bearing_agents.orchestration.contracts import PlannerContext, observe_state
 from bearing_agents.orchestration.llm_planner import build_prompt
 from bearing_agents.requirements.interaction import InteractionService
-from examples.interactive_design import main
+from examples.interactive_design import guided_options, main, resolve_guided_option
 
 
 def test_application_uses_same_validator_and_knowledge_for_runtime_and_service(tmp_path):
@@ -63,3 +65,25 @@ def test_guided_cli_numbered_user_approval_and_confirmation(tmp_path, monkeypatc
     stdout = capsys.readouterr().out
     assert "可选择操作" in stdout
     assert "为什么需要" in stdout
+
+
+def test_numbered_confirmation_rejects_stale_displayed_revision(tmp_path):
+
+    manager = StateManager(SQLiteStateRepository(tmp_path / "state.sqlite"))
+    service = InteractionService(manager, actor="local-engineer")
+    design = service.create_design("圆柱径向动压滑动轴承")
+    service.submit_turn(
+        design.design_id, "轴承宽度60mm", "width-initial",
+    )
+    shown = guided_options(manager.get_design(design.design_id))
+    assert any(item[0] == "confirm" for item in shown)
+    state = manager.get_design(design.design_id)
+    assert state.parameters["bearing_width"].revision == 1
+    service.correct_parameter(
+        design.design_id, "bearing_width", 1,
+        "轴承宽度65mm", "width-correction",
+    )
+    new_state = manager.get_design(design.design_id)
+    assert new_state.parameters["bearing_width"].revision != 1
+    with pytest.raises(ValueError, match="选项或版本已变化"):
+        resolve_guided_option(new_state, "confirm", "1", shown)
