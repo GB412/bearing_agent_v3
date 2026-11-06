@@ -4,6 +4,8 @@ import builtins
 
 import pytest
 
+from examples.interactive_design import guided_options, main, resolve_guided_option
+
 from bearing_agents.application import open_application
 from bearing_agents.core.state_manager import StateManager
 from bearing_agents.infra.state_repository import SQLiteStateRepository
@@ -11,7 +13,6 @@ from bearing_agents.knowledge.defaults import build_default_knowledge_base
 from bearing_agents.orchestration.contracts import PlannerContext, observe_state
 from bearing_agents.orchestration.llm_planner import build_prompt
 from bearing_agents.requirements.interaction import InteractionService
-from examples.interactive_design import guided_options, main, resolve_guided_option
 
 
 def test_application_uses_same_validator_and_knowledge_for_runtime_and_service(tmp_path):
