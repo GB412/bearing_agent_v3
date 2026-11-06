@@ -152,12 +152,10 @@ def display(application, design_id: str, execution=None) -> None:
                 )
             elif event.get("stage") == "committed":
                 print(f"  执行完成 → {event.get('action')}")
-        displayed = set()
         for q in execution.get("questions", []):
             prompt = q.get("question") or q.get("text")
             if prompt:
                 print(f"  系统提问：{prompt}")
-                displayed.add(prompt)
     print("  已知信息来自用户核实的参数；未决条件不会被自动确认。")
     for q in view.questions[:2]:
         print(f"  下一步问题：{q.text}")
