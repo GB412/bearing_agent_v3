@@ -3,7 +3,6 @@
 import builtins
 
 import pytest
-
 from examples.interactive_design import guided_options, main, resolve_guided_option
 
 from bearing_agents.application import open_application
