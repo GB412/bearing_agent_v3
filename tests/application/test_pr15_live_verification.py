@@ -113,3 +113,43 @@ def test_summarize_run_drops_prompts_headers_and_raw_content():
     assert "sensitive-user-text" not in serialized
     assert "sensitive-untrusted-user-utterance" not in serialized
     assert result["planned_actions"][0]["model_id"] == "deepseek-v4-pro"
+
+
+def test_offline_all_scenarios_show_distinct_state_driven_routes():
+    records = [
+        item
+        for name in SCENARIOS
+        for item in run_scenario(name, live=False, max_steps=4)
+    ]
+    assessment = evaluate_records(records, live=False)
+    assert assessment["independent_scenarios"] == 3
+    assert len(records) == 9
+    assert assessment["distinct_action_sequences"] >= 2
+    assert assessment["engineering_approval"] is False
+    assert all(row["engineering_acceptance"] == "DOMAIN_PENDING" for row in records)
+
+
+def test_cli_real_error_does_not_echo_provider_error(tmp_path, monkeypatch, capsys):
+    import builtins
+
+    import examples.interactive_design as cli
+    from bearing_agents.orchestration.contracts import FakePlanner
+
+    secret_marker = "private-marker-from-provider"
+    monkeypatch.setattr(cli, "LLMPlanner", lambda: FakePlanner())
+
+    class BadExtractor:
+        @staticmethod
+        def from_environment():
+            return BadExtractor()
+
+        def extract(self, _text):
+            raise RuntimeError("Provider error leaked: " + secret_marker)
+
+    monkeypatch.setattr(cli, "LLMExtractor", BadExtractor)
+    inputs = iter(["我想设计一个轴承", ":quit"])
+    monkeypatch.setattr(builtins, "input", lambda _prompt: next(inputs))
+    assert cli.main(["--llm", "--db", str(tmp_path / "test.sqlite")]) == 0
+    printed = capsys.readouterr().out
+    assert "RuntimeError" in printed
+    assert secret_marker not in printed
