@@ -171,3 +171,29 @@ def test_no_result_from_untrusted_model_cannot_grant_user_privilege(env):
     from bearing_agents.requirements.extraction import LLMExtractor
     with pytest.raises(ValueError):
         LLMExtractor(BadModel()).extract("轴径100mm")
+
+@pytest.mark.parametrize(("text", "field", "expected", "unit"), [
+    ("轴径是100毫米", "journal_diameter", 100, "mm"),
+    ("转速为1500转/分", "rotational_speed", 1500, "rpm"),
+    ("径向载荷后来查到了，是12kN", "load", 12000, "N"),
+    ("载荷是12千牛", "load", 12000, "N"),
+])
+def test_natural_chinese_values_require_exact_evidence(env, text, field, expected, unit):
+    manager, service, design = env
+    service.submit_turn(design.design_id, text, "natural-turn")
+    record = manager.get_design(design.design_id).parameters[field]
+    assert record.value == expected
+    assert record.unit == unit
+    assert record.verified_source_ref is not None
+    assert not record.confirmed_by
+
+
+@pytest.mark.parametrize("text", [
+    "载荷不是12kN",
+    "载荷大约12kN",
+    "载荷是12千牛左右",
+])
+def test_natural_chinese_uncertain_or_negated_load_is_not_accepted(env, text):
+    manager, service, design = env
+    service.submit_turn(design.design_id, text, "uncertain-turn")
+    assert "load" not in manager.get_design(design.design_id).parameters
