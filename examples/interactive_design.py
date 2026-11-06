@@ -281,7 +281,12 @@ def main(argv=None) -> int:
                 display(application, design_id, last_execution)
                 shown_options = guided_options(manager.get_design(design_id))
             except (ValueError, PermissionError, KeyError, RuntimeError) as exc:
-                print(f"操作未完成：{type(exc).__name__}: {exc}")
+                if args.llm:
+                    # Provider exceptions can contain raw request metadata. Never
+                    # echo their messages in real-API mode.
+                    print(f"操作未完成：{type(exc).__name__}；请检查模型服务或输入。")
+                else:
+                    print(f"操作未完成：{type(exc).__name__}: {exc}")
                 # On model failure, no automatic switch to FakePlanner.
     return 0
 
