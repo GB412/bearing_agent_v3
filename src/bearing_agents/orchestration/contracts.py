@@ -113,6 +113,11 @@ class StateSummary:
     latest_precheck_status: str | None = None
     recent_findings: tuple[str, ...] = ()
     actionable_finding_refs: tuple[str, ...] = ()
+    # Read-only language hints, never engineering inputs, confirmation, or authority.
+    scenario_hint: str | None = None
+    objective_hints: tuple[str, ...] = ()
+    recent_user_request: str = ""
+    pending_constraint_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -167,8 +172,13 @@ def fresh_completed_actions(state: DesignState) -> frozenset[str]:
 def observe_state(
     state: DesignState, goal: str, target_ref: str | None,
     *, readiness_check: ReadinessCheck = readiness_for,
+    recent_text: str = "",
 ) -> StateSummary:
     gate = readiness_check(state, "R2")
+    from bearing_agents.requirements.guidance import interpret_requirements
+
+    bounded_text = recent_text.strip()[-300:]
+    guidance = interpret_requirements(state, gate, recent_text=bounded_text)
     digest = engineering_digest(state)
     done = fresh_completed_actions(state)
     candidate = state.candidate_designs[-1] if state.candidate_designs else None
@@ -204,6 +214,10 @@ def observe_state(
         ),
         recent_findings=findings,
         actionable_finding_refs=actionable,
+        scenario_hint=guidance.scenario_hint,
+        objective_hints=tuple(guidance.objective_hints[:3]),
+        recent_user_request=bounded_text[-160:],
+        pending_constraint_count=len(guidance.pending_user_decisions),
     )
 
 
