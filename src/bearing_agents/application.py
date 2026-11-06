@@ -183,6 +183,12 @@ def open_application(
         registered.update(agent_registry.as_dict())
     if agents:
         registered.update(agents)
+    # Use the exact validator registered for the Runtime when persisting
+    # reports. A different default rule set here would reject legitimate
+    # custom-knowledge checks or silently reinterpret their evidence.
+    shared_validator = registered["validation_agent"]
+    if not isinstance(shared_validator, ValidationAgent):
+        raise TypeError("validation_agent must be a trusted ValidationAgent")
 
     with open_runtime(
         manager,
@@ -198,5 +204,5 @@ def open_application(
             runtime,
             actor=actor,
             extractor=extractor,
-            validation_service=ValidationService(manager),
+            validation_service=ValidationService(manager, agent=shared_validator),
         )
