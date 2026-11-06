@@ -54,7 +54,10 @@ def require_live_config() -> None:
         raise ValueError("Missing required environment variable(s): " + ", ".join(missing))
 
 
-def summarize_run(execution: dict, state, *, scenario: str, turn: int) -> dict:
+def summarize_run(
+    execution: dict, state, *, scenario: str, turn: int,
+    input_ready: bool | None = None,
+) -> dict:
     """Persist a bounded, privacy-conscious observation; no message bodies or keys."""
     plans = []
     guards = []
@@ -63,6 +66,8 @@ def summarize_run(execution: dict, state, *, scenario: str, turn: int) -> dict:
             audit = step.get("planner_metadata") or {}
             plans.append({
                 "action": step.get("action"),
+                "target_ref": step.get("target_ref"),
+                "finding_ref": step.get("finding_ref"),
                 "model_id": audit.get("model_id"),
                 "latency_ms": audit.get("latency_ms"),
                 "token_usage": audit.get("token_usage"),
@@ -77,6 +82,7 @@ def summarize_run(execution: dict, state, *, scenario: str, turn: int) -> dict:
         "scenario": scenario,
         "turn": turn,
         "termination": execution.get("termination_reason"),
+        "r2_input_ready": input_ready,
         "planned_actions": plans,
         "guards": guards,
         "trusted_parameter_ids": sorted(state.parameters),
@@ -121,8 +127,10 @@ def run_scenario(name: str, *, live: bool, max_steps: int = 4) -> list[dict]:
                     f"pr15:{name}:{i}:{uuid4()}", goal="design",
                 )
                 state = manager.get_design(design.design_id)
+                view = application.show_state(design.design_id)
                 records.append(summarize_run(
                     receipt.execution, state, scenario=name, turn=i,
+                    input_ready=view.input_ready,
                 ))
             return records
 
