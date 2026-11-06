@@ -7,6 +7,7 @@ from examples.interactive_design import guided_options, main, resolve_guided_opt
 
 from bearing_agents.application import open_application
 from bearing_agents.core.state_manager import StateManager
+from bearing_agents.domain.agent_protocols import PlanDecision
 from bearing_agents.infra.state_repository import SQLiteStateRepository
 from bearing_agents.knowledge.defaults import build_default_knowledge_base
 from bearing_agents.orchestration.contracts import PlannerContext, observe_state
@@ -87,3 +88,37 @@ def test_numbered_confirmation_rejects_stale_displayed_revision(tmp_path):
     assert new_state.parameters["bearing_width"].revision != 1
     with pytest.raises(ValueError, match="选项或版本已变化"):
         resolve_guided_option(new_state, "confirm", "1", shown)
+
+
+def test_actual_application_runtime_receives_latest_user_intent(tmp_path):
+    class CapturePlanner:
+        def __init__(self):
+            self.seen = []
+
+        def plan(self, summary, *, context=None):
+            self.seen.append(summary)
+            return PlanDecision(
+                action="clarify_requirement",
+                selected_agent="requirements_fake",
+                rationale="unverified intent needs clarification",
+                expected_result="questions",
+                state_version=summary.domain_version,
+            )
+
+    manager = StateManager(SQLiteStateRepository(tmp_path / "state.sqlite"))
+    planner = CapturePlanner()
+    with open_application(
+        manager, tmp_path / "checkpoint.sqlite",
+        actor="designer", planner=planner,
+    ) as application:
+        design = application.create_design("初步设计")
+        application.submit_turn(
+            design.design_id,
+            "我要设计齿轮箱用的滑动轴承，可靠性优先，请先引导我。",
+            "intent-turn",
+            goal="design",
+        )
+    assert planner.seen
+    assert planner.seen[0].scenario_hint == "gearbox"
+    assert "reliability" in planner.seen[0].objective_hints
+    assert not manager.get_design(design.design_id).constraints
