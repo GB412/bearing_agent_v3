@@ -294,6 +294,15 @@ class Runtime:
             "termination_reason": "NO_PROGRESS" if repeats >= self.max_same_action else None,
             "trace": self._trace(state, stage="plan", action=decision.action,
                                  domain_version=decision.state_version, reason=decision.rationale,
+                                 target_ref=(
+                                     chosen_target if chosen_target in summary.candidate_refs
+                                     else None
+                                 ),
+                                 finding_ref=(
+                                     decision.finding_ref
+                                     if decision.finding_ref in summary.actionable_finding_refs
+                                     else None
+                                 ),
                                  **self._planner_audit()),
         }
 

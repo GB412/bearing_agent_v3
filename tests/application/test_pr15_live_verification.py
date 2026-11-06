@@ -154,3 +154,27 @@ def test_cli_real_error_does_not_echo_provider_error(tmp_path, monkeypatch, caps
     printed = capsys.readouterr().out
     assert "RuntimeError" in printed
     assert secret_marker not in printed
+
+def test_missing_load_story_must_reach_real_input_readiness():
+    turns = run_scenario("missing_load", live=False, max_steps=4)
+    assert "load" not in turns[1]["trusted_parameter_ids"]
+    assert turns[1]["r2_input_ready"] is False
+    assert "load" in turns[2]["trusted_parameter_ids"]
+    assert turns[2]["r2_input_ready"] is True
+
+
+def test_sanitized_plan_retains_only_bounded_target_references():
+    class State:
+        parameters = {}
+        constraints = []
+        candidate_designs = []
+
+    result = summarize_run({
+        "termination_reason": "GOAL_REACHED",
+        "trace": [{"stage": "plan", "action": "revise_candidate",
+                   "target_ref": "candidate:example@2",
+                   "finding_ref": "finding:example@2"}],
+    }, State(), scenario="space_limit", turn=3, input_ready=True)
+    assert result["r2_input_ready"] is True
+    assert result["planned_actions"][0]["target_ref"] == "candidate:example@2"
+    assert result["planned_actions"][0]["finding_ref"] == "finding:example@2"
