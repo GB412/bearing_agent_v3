@@ -106,13 +106,16 @@ def guided_options(state):
     return items
 
 
-def resolve_guided_option(state, command: str, index: str):
-    """Map a numbered CLI selection to its current target and revision."""
-    options = [item for item in guided_options(state) if item[0] == command]
+def resolve_guided_option(state, command: str, index: str, shown_options):
+    """Use the *displayed* target, rejecting changes before confirmation."""
+    options = [item for item in shown_options if item[0] == command]
     number = int(index)
     if number < 1 or number > len(options):
         raise ValueError("选择编号无效，请使用 :show 查看当前选项")
-    return options[number - 1][1:]
+    selected = options[number - 1]
+    if selected not in guided_options(state):
+        raise ValueError("选项或版本已变化，请先使用 :show 刷新")
+    return selected[1:]
 
 
 def display(application, design_id: str, execution=None) -> None:
@@ -214,6 +217,7 @@ def main(argv=None) -> int:
             ":report [文件名] 导出报告，:quit 退出。"
         )
         display(application, design_id)
+        shown_options = guided_options(manager.get_design(design_id))
         while True:
             try:
                 user_text = input("\n设计> ").strip()
@@ -227,6 +231,7 @@ def main(argv=None) -> int:
             try:
                 if user_text == ":show":
                     display(application, design_id, last_execution)
+                    shown_options = guided_options(manager.get_design(design_id))
                     continue
                 if user_text == ":run":
                     last_execution = application.runtime.invoke(design_id, goal="design")
@@ -234,7 +239,7 @@ def main(argv=None) -> int:
                     parts = user_text.split()
                     if len(parts) == 2:
                         constraint_id, revision = resolve_guided_option(
-                            manager.get_design(design_id), "approve", parts[1],
+                            manager.get_design(design_id), "approve", parts[1], shown_options,
                         )
                     elif len(parts) == 3:
                         _, constraint_id, raw_revision = parts
@@ -248,7 +253,7 @@ def main(argv=None) -> int:
                     parts = user_text.split()
                     if len(parts) == 2:
                         field, revision = resolve_guided_option(
-                            manager.get_design(design_id), "confirm", parts[1],
+                            manager.get_design(design_id), "confirm", parts[1], shown_options,
                         )
                     elif len(parts) == 3:
                         _, field, raw_revision = parts
@@ -282,6 +287,7 @@ def main(argv=None) -> int:
                     )
                     last_execution = turn.execution
                 display(application, design_id, last_execution)
+                shown_options = guided_options(manager.get_design(design_id))
             except (ValueError, PermissionError, KeyError, RuntimeError) as exc:
                 print(f"操作未完成：{type(exc).__name__}: {exc}")
                 # On model failure, no automatic switch to FakePlanner.
