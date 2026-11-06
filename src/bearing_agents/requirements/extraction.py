@@ -11,9 +11,9 @@ from bearing_agents.requirements.contracts import RequirementProposal
 _NUM = r"([0-9]+(?:\.[0-9]+)?)"
 _PATTERNS = (
     ("journal_diameter",
-     rf"(?:轴径|轴颈直径|D\s*=)\s*[:：=]?\s*{_NUM}\s*(mm|毫米|m|米)(?![A-Za-z])"),
-    ("load", rf"(?:径向载荷|轴承载荷|载荷|F\s*=)\s*[:：=]?\s*{_NUM}\s*(kN|N)(?![A-Za-z])"),
-    ("rotational_speed", rf"(?:转速|n\s*=)\s*[:：=]?\s*{_NUM}\s*(r/min|rpm)(?![A-Za-z])"),
+     rf"(?:轴径|轴颈直径|D\s*=)\s*[:：=]?\s*(?:是|为)?\s*{_NUM}\s*(mm|毫米|m|米)(?![A-Za-z])"),
+    ("load", rf"(?:径向载荷|轴承载荷|载荷|F\s*=)\s*[:：=]?\s*(?:后来查到了[，,]?\s*)?(?:是|为)?\s*{_NUM}\s*(kN|N|千牛)(?![A-Za-z])"),
+    ("rotational_speed", rf"(?:转速|n\s*=)\s*[:：=]?\s*(?:是|为)?\s*{_NUM}\s*(r/min|rpm|转/分)(?![A-Za-z])"),
     ("bearing_width",
      rf"(?:轴承宽度|(?<!安装)宽度)\s*(?:为|是|=|:|：)?\s*{_NUM}\s*(mm|毫米|m|米)(?![A-Za-z])"),
     ("radial_clearance",
@@ -36,7 +36,7 @@ def extract(text: str) -> list[RequirementProposal]:
             if any(t in context for t in ("不是", "不对", "并非", "不要", "错了", "错误")):
                 modality = "NEGATED"
             unit = match.group(2)
-            unit = {"毫米": "mm", "米": "m", "r/min": "rpm"}.get(unit, unit)
+            unit = {"毫米": "mm", "米": "m", "r/min": "rpm", "千牛": "kN", "转/分": "rpm"}.get(unit, unit)
             proposals.append(RequirementProposal(
                 kind="parameter", field_id=field, quote=quote,
                 start=match.start(), end=match.end(),
