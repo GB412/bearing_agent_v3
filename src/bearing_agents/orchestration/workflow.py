@@ -197,9 +197,14 @@ class Runtime:
 
     def _plan(self, state):
         domain = self.manager.get_design(state["design_id"])
+        # The latest persisted user message informs the planner as an unverified
+        # hint only. Engineering values still come exclusively from DesignState.
+        messages = self.manager.repository.list_user_messages(state["design_id"])
+        recent_text = messages[-1].content[-300:] if messages else ""
         summary = observe_state(
             domain, state["goal"], state["target_ref"],
             readiness_check=self._readiness,
+            recent_text=recent_text,
         )
         context = PlannerContext(
             action_descriptions=tuple(
