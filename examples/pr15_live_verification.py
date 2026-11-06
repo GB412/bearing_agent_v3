@@ -20,7 +20,6 @@ from bearing_agents.infra.state_repository import SQLiteStateRepository
 from bearing_agents.orchestration.llm_planner import LLMPlanner
 from bearing_agents.requirements.extraction import LLMExtractor
 
-
 # Normal, imperfect real-world descriptions—not prompts that dictate Agent names.
 SCENARIOS: dict[str, tuple[str, ...]] = {
     "missing_load": (
