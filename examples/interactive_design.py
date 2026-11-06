@@ -158,12 +158,6 @@ def display(application, design_id: str, execution=None) -> None:
             if prompt:
                 print(f"  系统提问：{prompt}")
                 displayed.add(prompt)
-        for q in view.questions:
-            if q.text not in displayed:
-                print(f"  需要补充：{q.text}")
-    else:
-        for q in view.questions:
-            print(f"  需要补充：{q.text}")
     print("  已知信息来自用户核实的参数；未决条件不会被自动确认。")
     for q in view.questions[:2]:
         print(f"  下一步问题：{q.text}")
