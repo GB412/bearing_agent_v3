@@ -2,11 +2,11 @@
 
 import builtins
 
+from bearing_agents.application import open_application
 from bearing_agents.core.state_manager import StateManager
 from bearing_agents.infra.state_repository import SQLiteStateRepository
 from bearing_agents.knowledge.defaults import build_default_knowledge_base
-from bearing_agents.application import open_application
-from bearing_agents.orchestration.contracts import observe_state, PlannerContext
+from bearing_agents.orchestration.contracts import PlannerContext, observe_state
 from bearing_agents.orchestration.llm_planner import build_prompt
 from bearing_agents.requirements.interaction import InteractionService
 from examples.interactive_design import main
