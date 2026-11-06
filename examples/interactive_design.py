@@ -94,6 +94,30 @@ def render_report(state, execution=None) -> str:
     return "\n".join(lines)
 
 
+def guided_options(state):
+    """Rebuild options from authoritative state on every turn; never store an index."""
+    items = []
+    for constraint in state.constraints:
+        if not constraint.approved:
+            items.append(("approve", constraint.id, constraint.revision))
+    for field, record in sorted(state.parameters.items()):
+        if record.value is not None and not record.confirmed_by:
+            items.append(("confirm", field, record.revision))
+    return items
+
+
+def resolve_guided_option(state, command: str, index: str, shown_options):
+    """Use the *displayed* target, rejecting changes before confirmation."""
+    options = [item for item in shown_options if item[0] == command]
+    number = int(index)
+    if number < 1 or number > len(options):
+        raise ValueError("选择编号无效，请使用 :show 查看当前选项")
+    selected = options[number - 1]
+    if selected not in guided_options(state):
+        raise ValueError("选项或版本已变化，请先使用 :show 刷新")
+    return selected[1:]
+
+
 def display(application, design_id: str, execution=None) -> None:
     view = application.show_state(design_id)
     state = application.manager.get_design(design_id)
@@ -128,18 +152,26 @@ def display(application, design_id: str, execution=None) -> None:
                 )
             elif event.get("stage") == "committed":
                 print(f"  执行完成 → {event.get('action')}")
-        displayed = set()
         for q in execution.get("questions", []):
             prompt = q.get("question") or q.get("text")
             if prompt:
                 print(f"  系统提问：{prompt}")
-                displayed.add(prompt)
-        for q in view.questions:
-            if q.text not in displayed:
-                print(f"  需要补充：{q.text}")
-    else:
-        for q in view.questions:
-            print(f"  需要补充：{q.text}")
+    print("  已知信息来自用户核实的参数；未决条件不会被自动确认。")
+    for q in view.questions[:2]:
+        print(f"  下一步问题：{q.text}")
+        if q.why_needed:
+            print(f"  为什么需要：{q.why_needed}")
+    if view.guidance.objective_hints:
+        print("  用户偏好线索（未确认）：" + "、".join(view.guidance.objective_hints))
+    options = guided_options(state)
+    if options:
+        print("  可选择操作（显示时绑定当前版本，提交时再次核验）：")
+        approvals = [item for item in options if item[0] == "approve"]
+        confirmations = [item for item in options if item[0] == "confirm"]
+        for idx, (_, key, _) in enumerate(approvals, 1):
+            print(f"    :approve {idx}  批准当前约束 {key}")
+        for idx, (_, key, _) in enumerate(confirmations, 1):
+            print(f"    :confirm {idx}  确认当前参数 {key}")
     print("  工程结论：ENGINEERING_DOMAIN_PENDING；DLAP 未接入。")
 
 
@@ -172,11 +204,12 @@ def main(argv=None) -> int:
             f"| design_id={design_id}"
         )
         print(
-            "输入中文需求；:show 查看，:run 继续，:approve ID 版本 批准约束，"
-            ":confirm 字段 版本，:correct 字段 版本 新描述，"
+            "输入中文需求；:show 查看，:run 继续，:approve 编号 批准约束，"
+            ":confirm 编号 确认参数（也兼容 ID/字段 + 版本），:correct 字段 版本 新描述，"
             ":report [文件名] 导出报告，:quit 退出。"
         )
         display(application, design_id)
+        shown_options = guided_options(manager.get_design(design_id))
         while True:
             try:
                 user_text = input("\n设计> ").strip()
@@ -190,18 +223,37 @@ def main(argv=None) -> int:
             try:
                 if user_text == ":show":
                     display(application, design_id, last_execution)
+                    shown_options = guided_options(manager.get_design(design_id))
                     continue
                 if user_text == ":run":
                     last_execution = application.runtime.invoke(design_id, goal="design")
                 elif user_text.startswith(":approve "):
-                    _, constraint_id, revision = user_text.split(" ", 2)
+                    parts = user_text.split()
+                    if len(parts) == 2:
+                        constraint_id, revision = resolve_guided_option(
+                            manager.get_design(design_id), "approve", parts[1], shown_options,
+                        )
+                    elif len(parts) == 3:
+                        _, constraint_id, raw_revision = parts
+                        revision = int(raw_revision)
+                    else:
+                        raise ValueError("请使用 :approve 编号 或 :approve ID 版本")
                     application.interaction.approve_constraint(
-                        design_id, constraint_id, int(revision)
+                        design_id, constraint_id, int(revision),
                     )
                 elif user_text.startswith(":confirm "):
-                    _, field, revision = user_text.split(" ", 2)
+                    parts = user_text.split()
+                    if len(parts) == 2:
+                        field, revision = resolve_guided_option(
+                            manager.get_design(design_id), "confirm", parts[1], shown_options,
+                        )
+                    elif len(parts) == 3:
+                        _, field, raw_revision = parts
+                        revision = int(raw_revision)
+                    else:
+                        raise ValueError("请使用 :confirm 编号 或 :confirm 字段 版本")
                     application.interaction.confirm_parameter(
-                        design_id, field, int(revision)
+                        design_id, field, int(revision),
                     )
                 elif user_text.startswith(":correct "):
                     _, field, revision, corrected = user_text.split(" ", 3)
@@ -227,6 +279,7 @@ def main(argv=None) -> int:
                     )
                     last_execution = turn.execution
                 display(application, design_id, last_execution)
+                shown_options = guided_options(manager.get_design(design_id))
             except (ValueError, PermissionError, KeyError, RuntimeError) as exc:
                 print(f"操作未完成：{type(exc).__name__}: {exc}")
                 # On model failure, no automatic switch to FakePlanner.

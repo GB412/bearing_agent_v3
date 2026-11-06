@@ -221,7 +221,7 @@ def test_runtime_trace_has_per_step_nonsecret_planner_metadata(ready, runtime_fa
     entry = next(row for row in result["trace"] if row["stage"] == "plan")
     audit = entry["planner_metadata"]
     assert audit["token_usage"]["prompt_tokens"] == 15
-    assert audit["prompt_version"] == "pr02b-planner-v1"
+    assert audit["prompt_version"] == "pr14-intent-aware-planner-v1"
     assert "base_url" not in audit
     assert "api_key" not in str(audit).lower()
 
