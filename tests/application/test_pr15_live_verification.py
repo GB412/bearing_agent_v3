@@ -133,6 +133,7 @@ def test_cli_real_error_does_not_echo_provider_error(tmp_path, monkeypatch, caps
     import builtins
 
     import examples.interactive_design as cli
+
     from bearing_agents.orchestration.contracts import FakePlanner
 
     secret_marker = "private-marker-from-provider"
