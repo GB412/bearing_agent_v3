@@ -21,20 +21,23 @@ class UserTurn(BaseModel):
 
 
 class RequirementProposal(BaseModel):
-    """Untrusted extraction. Message identity is supplied separately by the caller."""
+    """Untrusted structured extraction, without model-authored evidence offsets.
+
+    The application—not the model—attaches message identity and write authority.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["parameter", "steady_state", "scope", "constraint"]
+    kind: Literal["parameter", "steady_state", "scope", "constraint", "preference"]
     field_id: str
-    quote: str
-    start: int = Field(ge=0)
-    end: int = Field(gt=0)
-    value: float | str | None = None
+    value: float | str | bool | None = None
     unit: str | None = None
-    role: ParameterRole | None = None
-    modality: Literal["EXPLICIT", "UNCERTAIN", "NEGATED", "AMBIGUOUS"] = "EXPLICIT"
+    modality: Literal[
+        "EXPLICIT", "UNCERTAIN", "NEGATED", "AMBIGUOUS", "UNKNOWN", "CORRECTION"
+    ] = "EXPLICIT"
     operator: Literal["LE", "IN", "NOT_IN"] | None = None
+    # Kept for deterministic/legacy callers; ignored for write permissions.
+    role: ParameterRole | None = None
 
 
 class VerifiedRequirement(BaseModel):

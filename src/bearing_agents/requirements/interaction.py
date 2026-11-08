@@ -109,15 +109,18 @@ class InteractionService:
             elif p.kind=="scope":
                 scope=p.value
             elif p.kind=="steady_state":
-                steady=(p.value=="true")
-            elif p.kind=="constraint":
-                # Keep user-declared boundaries inert until explicit approval.
+                steady=(p.value is True or p.value == "true")
+            elif p.kind in {"constraint", "preference"}:
+                # Preferences remain soft and unapproved; no model can grant approval.
                 constraints.append({
                     "id":f"msg:{message.message_id}:constraint:{p.field_id}",
                     "parameter":p.field_id,"operator":ConstraintOperator(p.operator),
                     "target":v.normalized_value,"unit":v.normalized_unit,
-                    "severity":ConstraintSeverity.HARD,"origin":"user",
-                    "approved":False,
+                    "severity":(
+                        ConstraintSeverity.SOFT if p.kind == "preference"
+                        else ConstraintSeverity.HARD
+                    ),
+                    "origin":"user", "approved":False,
                 })
         if scope and scope not in {"cylindrical_radial_hydrodynamic","unsupported"}:
             scope=None

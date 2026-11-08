@@ -118,20 +118,28 @@ def resolve_guided_option(state, command: str, index: str, shown_options):
     return selected[1:]
 
 
-def display(application, design_id: str, execution=None) -> None:
-    view = application.show_state(design_id)
+def display(application, design_id: str, execution=None, *, view=None) -> None:
+    view = view if view is not None else application.show_state(design_id)
     state = application.manager.get_design(design_id)
     print(
         f"\n设计 {design_id} | 版本 {state.state_version} | "
         f"R2就绪={view.input_ready} | 轴承类型={view.scope}"
     )
     for key, record in sorted(state.parameters.items()):
-        print(f"  参数 {key}: {record.value} {record.unit} [{record.status.value}]")
+        print(
+            f"  参数 {key} (v{record.revision}): {record.value} {record.unit} "
+            f"[{record.status.value}]; 来源已记录={bool(record.verified_source_ref)}"
+        )
+    for case in state.operating_cases:
+        print(
+            f"  工况 {case.case_id}: 单一稳态={case.is_steady_state}; "
+            f"来源已记录={bool(case.verified_source_ref or case.confirmed_by)}"
+        )
     for item in state.constraints:
         print(
             f"  约束 {item.id} (v{item.revision}): "
             f"{item.parameter} {item.operator.value} {item.target} {item.unit}; "
-            f"approved={item.approved}"
+            f"severity={item.severity.value}; approved={item.approved}"
         )
     for candidate in state.candidate_designs:
         print(
@@ -156,7 +164,10 @@ def display(application, design_id: str, execution=None) -> None:
             prompt = q.get("question") or q.get("text")
             if prompt:
                 print(f"  系统提问：{prompt}")
-    print("  已知信息来自用户核实的参数；未决条件不会被自动确认。")
+    if view.unresolved:
+        for issue in view.unresolved[:3]:
+            print(f"  本轮未录入：{issue}")
+    print("  已录入参数附带用户来源；待核实信息不会自动变成已确认值。")
     for q in view.questions[:2]:
         print(f"  下一步问题：{q.text}")
         if q.why_needed:
@@ -182,10 +193,15 @@ def main(argv=None) -> int:
     parser.add_argument("--design-id", default=None)
     parser.add_argument("--actor", default="local-engineer")
     parser.add_argument("--llm", action="store_true", help="Use real API, never fake fallback")
+    parser.add_argument(
+        "--intake-only", action="store_true",
+        help="Only extract and persist requirements; never run the Supervisor",
+    )
     args = parser.parse_args(argv)
     # Fail before creating a session if real model config is missing or invalid.
-    planner = LLMPlanner() if args.llm else None
-    extractor = LLMExtractor.from_environment().extract if args.llm else None
+    planner = LLMPlanner() if args.llm and not args.intake_only else None
+    extractor_instance = LLMExtractor.from_environment() if args.llm else None
+    extractor = extractor_instance.extract if extractor_instance else None
     args.db.parent.mkdir(parents=True, exist_ok=True)
     checkpoint = args.checkpoint or args.db.with_suffix(".checkpoint.sqlite")
     checkpoint.parent.mkdir(parents=True, exist_ok=True)
@@ -201,6 +217,7 @@ def main(argv=None) -> int:
         design_id = state.design_id
         print(
             f"多 Agent 轴承设计 | {'REAL_LLM' if args.llm else 'OFFLINE'} "
+            f"| {'INTAKE_ONLY' if args.intake_only else 'DESIGN'} "
             f"| design_id={design_id}"
         )
         print(
@@ -226,6 +243,9 @@ def main(argv=None) -> int:
                     shown_options = guided_options(manager.get_design(design_id))
                     continue
                 if user_text == ":run":
+                    if args.intake_only:
+                        print("需求录入模式不执行 Supervisor；请去掉 --intake-only。")
+                        continue
                     last_execution = application.runtime.invoke(design_id, goal="design")
                 elif user_text.startswith(":approve "):
                     parts = user_text.split()
@@ -274,11 +294,29 @@ def main(argv=None) -> int:
                     print(f"报告已保存：{report_path}")
                     continue
                 else:
-                    turn = application.submit_turn(
-                        design_id, user_text, str(uuid4()), goal="design",
-                    )
-                    last_execution = turn.execution
-                display(application, design_id, last_execution)
+                    if args.intake_only:
+                        _, intake_view = application.interaction.submit_turn(
+                            design_id, user_text, str(uuid4()),
+                        )
+                        last_execution = None
+                    else:
+                        turn = application.submit_turn(
+                            design_id, user_text, str(uuid4()), goal="design",
+                        )
+                        last_execution = turn.execution
+                        intake_view = None
+                    if extractor_instance and extractor_instance.last_recovery:
+                        detail = extractor_instance.last_recovery
+                        print(
+                            "提取提示：模型有 "
+                            f"{detail['invalid_proposals']} 条格式不符的提案，"
+                            f"补充识别 {detail['recovered_from_text']} 条基础信息；"
+                            "结果仍需业务校验。"
+                        )
+                display(
+                    application, design_id, last_execution,
+                    view=intake_view if not user_text.startswith(":") else None,
+                )
                 shown_options = guided_options(manager.get_design(design_id))
             except (ValueError, PermissionError, KeyError, RuntimeError) as exc:
                 if args.llm:

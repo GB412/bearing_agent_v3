@@ -86,8 +86,8 @@ def test_forged_value_and_authority_are_rejected(env):
     manager,service,design=env
     text="轴径100mm"
     fake=RequirementProposal(
-        kind="parameter",field_id="journal_diameter",quote=text,
-        start=0,end=len(text),value=200,unit="mm",role="FIXED_INPUT",
+        kind="parameter",field_id="journal_diameter",
+        value=200,unit="mm",role="FIXED_INPUT",
     )
     assert verify(text,fake,manager.parameter_registry).decision=="REJECT"
     with pytest.raises(ValidationError):
@@ -178,7 +178,7 @@ def test_no_result_from_untrusted_model_cannot_grant_user_privilege(env):
     ("径向载荷后来查到了，是12kN", "load", 12000, "N"),
     ("载荷是12千牛", "load", 12000, "N"),
 ])
-def test_natural_chinese_values_require_exact_evidence(env, text, field, expected, unit):
+def test_natural_chinese_values_are_normalized_and_source_linked(env, text, field, expected, unit):
     manager, service, design = env
     service.submit_turn(design.design_id, text, "natural-turn")
     record = manager.get_design(design.design_id).parameters[field]
