@@ -33,7 +33,6 @@ def extract(text: str) -> list[RequirementProposal]:
     proposals: list[RequirementProposal] = []
     for field, expression in _PATTERNS:
         for match in re.finditer(expression, text, flags=re.I):
-            quote = match.group()
             context = claim_context(text, match.start(), match.end())
             uncertain = ("估计", "大概", "大约", "不确定", "左右", "约为", "约")
             modality = "UNCERTAIN" if any(t in context for t in uncertain) else "EXPLICIT"
