@@ -32,9 +32,9 @@ def verify(text: str, proposal: RequirementProposal, registry: ParameterSchemaRe
     # Keep qualifiers tied to this claim, not a preceding/following field.
     # A standalone trailing clause such as "载荷12kN，不确定" still qualifies
     # the immediately preceding value and must not be accepted as explicit.
-    left = re.split(r"[，,。；;！？!?\\n]", text[max(0, proposal.start-14):proposal.start])[-1]
+    left = re.split(r"[，,。；;！？!?\n]", text[max(0, proposal.start-14):proposal.start])[-1]
     right = text[proposal.end:min(len(text), proposal.end+16)]
-    right_parts = re.split(r"[，,。；;！？!?\\n]", right, maxsplit=1)
+    right_parts = re.split(r"[，,。；;！？!?\n]", right, maxsplit=1)
     trailing = right_parts[1].lstrip() if len(right_parts) > 1 else ""
     qualifier_heads = (
         "不确定", "我还不确定", "可能", "估计", "大约", "大概",
