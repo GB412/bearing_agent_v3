@@ -44,8 +44,7 @@ def extract(text: str) -> list[RequirementProposal]:
                        "千牛": "kN", "转/分": "rpm"}
             unit = aliases.get(unit, unit)
             proposals.append(RequirementProposal(
-                kind="parameter", field_id=field, quote=quote,
-                start=match.start(), end=match.end(),
+                kind="parameter", field_id=field, 
                 value=float(match.group(1)), unit=unit,
                 modality=modality,
                 role=("DESIGN_VARIABLE" if field in {
@@ -56,32 +55,32 @@ def extract(text: str) -> list[RequirementProposal]:
         at=text.find(keyword)
         if at >= 0:
             proposals.append(RequirementProposal(kind="scope",field_id="unsupported",
-                quote=keyword,start=at,end=at+len(keyword),value="unsupported"))
+                value="unsupported"))
             break
     else:
         for keyword in _SCOPE_SUPPORTED:
             at=text.find(keyword)
             if at >= 0:
                 proposals.append(RequirementProposal(kind="scope",field_id="supported",
-                    quote=keyword,start=at,end=at+len(keyword),value="cylindrical_radial_hydrodynamic"))
+                    value="cylindrical_radial_hydrodynamic"))
                 break
     for keyword in _DYNAMIC:
         at=text.find(keyword)
         if at>=0:
             proposals.append(RequirementProposal(kind="steady_state",field_id="dynamic",
-                quote=keyword,start=at,end=at+len(keyword),value="false"))
+                value="false"))
             break
     else:
         for keyword in _STEADY:
             at=text.find(keyword)
             if at>=0:
                 proposals.append(RequirementProposal(kind="steady_state",field_id="steady",
-                    quote=keyword,start=at,end=at+len(keyword),value="true"))
+                    value="true"))
                 break
     match=re.search(r"(?:安装宽度|轴承宽度|宽度)\s*(?:不能超过|不超过|小于等于|≤)\s*"+_NUM+r"\s*(mm|毫米|m|米)",text)
     if match:
         proposals.append(RequirementProposal(kind="constraint",field_id="bearing_width",
-            quote=match.group(),start=match.start(),end=match.end(),
+            
             value=float(match.group(1)),unit={"毫米":"mm","米":"m"}.get(match.group(2),match.group(2)),operator="LE"))
     # User-specified materials are constraints, not recommendations.
     material_patterns = (
@@ -93,7 +92,7 @@ def extract(text: str) -> list[RequirementProposal]:
         if match:
             proposals.append(RequirementProposal(
                 kind="constraint", field_id="material",
-                quote=match.group(), start=match.start(), end=match.end(),
+                
                 value=match.group(1), unit="1", operator=operator,
             ))
             break
@@ -101,7 +100,7 @@ def extract(text: str) -> list[RequirementProposal]:
 
 
 class ExtractionBatch(BaseModel):
-    """Strict model-facing envelope; no verified or identity fields."""
+    """JSON-Schema-compatible, model-facing extraction envelope."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -109,11 +108,10 @@ class ExtractionBatch(BaseModel):
 
 
 class LLMExtractor:
-    """Opt-in model extracts untrusted proposals; verification stays deterministic."""
+    """Structured real-LLM extraction; no text span offsets or write privileges."""
 
     def __init__(self, model):
         self.model = model
-        # Set only if model JSON had proposals with invalid schemas.
         self.last_recovery: dict[str, int] | None = None
 
     @classmethod
@@ -134,115 +132,76 @@ class LLMExtractor:
         except ImportError as exc:
             raise RuntimeError("Install project [llm] extra for real extraction") from exc
         client = ChatOpenAI(
-            api_key=api_key,base_url=base_url,model=model_name,
-            temperature=0,timeout=90,max_retries=0,
-        ).with_structured_output(ExtractionBatch,method="json_mode",include_raw=True)
+            api_key=api_key, base_url=base_url, model=model_name,
+            temperature=0, timeout=90, max_retries=0,
+        ).with_structured_output(ExtractionBatch, method="json_mode", include_raw=True)
         return cls(client)
 
-    def _recover_invalid_items(self, response: dict, text: str) -> list[RequirementProposal]:
-        """Recover from valid model JSON only, never coerce unknown proposal types.
-
-        Retained model items and exact-pattern suggestions from the user's
-        original text must still pass the trusted EvidenceVerifier.
-        """
-        raw = response.get("raw")
-        content = getattr(raw, "content", raw)
-        if not isinstance(content, str):
-            raise ValueError("Real extractor structured parsing failed")
-        try:
-            payload = json.loads(content)
-        except json.JSONDecodeError as exc:
-            raise ValueError("Real extractor JSON response invalid") from exc
-        if (
-            not isinstance(payload, dict)
-            or set(payload) != {"proposals"}
-            or not isinstance(payload["proposals"], list)
-            or len(payload["proposals"]) > 24
-        ):
+    @staticmethod
+    def _parse_response(response) -> tuple[list[RequirementProposal], int]:
+        """Keep individually valid items from JSON; reject malformed envelope/API."""
+        if isinstance(response, dict) and "raw" in response and "parsed" in response:
+            if response.get("parsing_error") is None and response.get("parsed") is not None:
+                return ExtractionBatch.model_validate(response["parsed"]).proposals, 0
+            response = getattr(response["raw"], "content", response["raw"])
+        if isinstance(response, ExtractionBatch):
+            return response.proposals, 0
+        if isinstance(response, str):
+            try:
+                response = json.loads(response)
+            except json.JSONDecodeError as exc:
+                raise ValueError("Real extractor JSON response invalid") from exc
+        if not isinstance(response, dict) or set(response) != {"proposals"}:
             raise ValueError("Real extractor JSON envelope invalid")
-        valid: list[RequirementProposal] = []
+        raw_proposals = response["proposals"]
+        if not isinstance(raw_proposals, list) or len(raw_proposals) > 24:
+            raise ValueError("Real extractor JSON envelope invalid")
+        valid = []
         rejected = 0
-        for item in payload["proposals"]:
+        for item in raw_proposals:
             try:
                 valid.append(RequirementProposal.model_validate(item))
             except ValueError:
                 rejected += 1
-        if not rejected:
-            raise ValueError("Real extractor structured parsing failed")
-        valid_keys = {(item.kind, item.field_id) for item in valid}
-        # Do not suppress multiple deterministic claims for the same field;
-        # InteractionService must resolve ambiguity, never select the last.
-        recovered = [
-            item for item in extract(text)
-            if (item.kind, item.field_id) not in valid_keys
-        ]
-        if not valid and not recovered:
-            raise ValueError("Real extractor had no safe proposals to recover")
-        self.last_recovery = {
-            "invalid_proposals": rejected,
-            "recovered_from_text": len(recovered),
-        }
-        return [*valid, *recovered]
-
-    def _fill_missing_explicit_regime(
-        self, text: str, proposals: list[RequirementProposal],
-    ) -> list[RequirementProposal]:
-        """Supplement omitted bearing scope/steady state, not arbitrary model fields.
-
-        This detects only exact user phrases; the caller's EvidenceVerifier
-        must still accept each added proposal before anything is persisted.
-        If the LLM already proposes a kind, do not let fallback overwrite it.
-        """
-        existing = {item.kind for item in proposals}
-        added = [
-            item for item in extract(text)
-            if item.kind in {"scope", "steady_state"} and item.kind not in existing
-        ]
-        if added:
-            prior = self.last_recovery or {
-                "invalid_proposals": 0, "recovered_from_text": 0,
-            }
-            self.last_recovery = {
-                "invalid_proposals": prior["invalid_proposals"],
-                "recovered_from_text": prior["recovered_from_text"] + len(added),
-            }
-        return [*proposals, *added]
+        return valid, rejected
 
     def extract(self, text: str) -> list[RequirementProposal]:
         self.last_recovery = None
         response = self.model.invoke(
-            "Extract ONLY explicit user-stated bearing facts as JSON: "
-            'an object with the single key "proposals" and a list (possibly empty). '
-            "No markdown. Every proposal MUST use kind exactly one of: "
-            "parameter, scope, steady_state, constraint. "
-            "Use kind=parameter for numeric fields journal_diameter, load, "
-            "rotational_speed, bearing_width, radial_clearance. "
-            "Use kind=scope with field_id=supported or unsupported. "
-            "Use kind=steady_state with field_id=steady or dynamic. "
-            "Use kind=constraint for explicit width/material restrictions only. "
-            "Every item requires kind, field_id, quote, start, end. Quote must be "
-            "an exact substring of the original user message, with Python "
-            "0-based character positions and end exclusive. Include value, "
-            "unit, modality, operator when appropriate. Modality MUST be "
-            "EXPLICIT, UNCERTAIN, NEGATED or AMBIGUOUS. "
-            "Do not invent absent values, including unknown loads. "
-            "Never provide message_id, actor, approval, confirmation, or provenance. "
-            "Example proposal: "
-            '{"kind":"parameter","field_id":"journal_diameter","quote":"轴径100mm",'
-            '"start":0,"end":7,"value":100,"unit":"mm","modality":"EXPLICIT"}. '
+            "Extract bearing-design requirements as a JSON object with exactly "
+            "one key: proposals (an array, empty if no facts). No markdown. "
+            "Each proposal has kind, field_id, value, unit, modality, operator "
+            "as applicable. NEVER output quote, start, end, source_ref, "
+            "confirmed_by or approval. Valid kinds: parameter, scope, "
+            "steady_state, constraint, preference. For numeric parameters use "
+            "field_id journal_diameter, load, rotational_speed, bearing_width "
+            "or radial_clearance; include numeric value and unit. Scope uses "
+            "field_id supported or unsupported and value "
+            "cylindrical_radial_hydrodynamic or unsupported. Steady-state uses "
+            "field_id steady/dynamic and value true/false as STRINGS. "
+            "Constraints and preferences can use bearing_width (LE) or "
+            "material (IN/NOT_IN). '最好' expresses a preference, not an "
+            "approved hard constraint. Modality MUST be EXPLICIT, UNCERTAIN, "
+            "UNKNOWN, NEGATED, AMBIGUOUS, or CORRECTION. If the user says "
+            "a value is approximate/unknown, do not mark it EXPLICIT. "
+            "For a correction, mark CORRECTION; never silently overwrite old "
+            "values. Do not invent missing numbers. "
+            "For example: "
+            '{"proposals":[{"kind":"parameter","field_id":"journal_diameter",'
+            '"value":100,"unit":"mm","modality":"EXPLICIT"}]}. '
             "User message: " + repr(text)
         )
-        if isinstance(response, dict) and "raw" in response and "parsed" in response:
-            if response.get("parsing_error") is not None:
-                partial = self._recover_invalid_items(response, text)
-                return self._fill_missing_explicit_regime(text, partial)
-            response = response["parsed"]
-        if isinstance(response, ExtractionBatch):
-            return self._fill_missing_explicit_regime(text, response.proposals)
-        raw = getattr(response, "content", response)
-        if isinstance(raw, str):
-            raw = json.loads(raw)
-        if isinstance(raw, list):
-            raw = {"proposals": raw}
-        parsed = ExtractionBatch.model_validate(raw)
-        return self._fill_missing_explicit_regime(text, parsed.proposals)
+        model_items, rejected = self._parse_response(response)
+        # Deterministic extraction supplements omissions from explicit user
+        # phrasing, but cannot override a model item for the same kind/field.
+        existing = {(item.kind, item.field_id) for item in model_items}
+        additions = [
+            item for item in extract(text)
+            if (item.kind, item.field_id) not in existing
+        ]
+        if rejected or additions:
+            self.last_recovery = {
+                "invalid_proposals": rejected,
+                "recovered_from_text": len(additions),
+            }
+        return [*model_items, *additions]
