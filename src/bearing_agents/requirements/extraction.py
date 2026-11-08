@@ -184,6 +184,30 @@ class LLMExtractor:
         }
         return [*valid, *recovered]
 
+    def _fill_missing_explicit_regime(
+        self, text: str, proposals: list[RequirementProposal],
+    ) -> list[RequirementProposal]:
+        """Supplement omitted bearing scope/steady state, not arbitrary model fields.
+
+        This detects only exact user phrases; the caller's EvidenceVerifier
+        must still accept each added proposal before anything is persisted.
+        If the LLM already proposes a kind, do not let fallback overwrite it.
+        """
+        existing = {item.kind for item in proposals}
+        added = [
+            item for item in extract(text)
+            if item.kind in {"scope", "steady_state"} and item.kind not in existing
+        ]
+        if added:
+            prior = self.last_recovery or {
+                "invalid_proposals": 0, "recovered_from_text": 0,
+            }
+            self.last_recovery = {
+                "invalid_proposals": prior["invalid_proposals"],
+                "recovered_from_text": prior["recovered_from_text"] + len(added),
+            }
+        return [*proposals, *added]
+
     def extract(self, text: str) -> list[RequirementProposal]:
         self.last_recovery = None
         response = self.model.invoke(
@@ -210,13 +234,15 @@ class LLMExtractor:
         )
         if isinstance(response, dict) and "raw" in response and "parsed" in response:
             if response.get("parsing_error") is not None:
-                return self._recover_invalid_items(response, text)
+                partial = self._recover_invalid_items(response, text)
+                return self._fill_missing_explicit_regime(text, partial)
             response = response["parsed"]
         if isinstance(response, ExtractionBatch):
-            return response.proposals
+            return self._fill_missing_explicit_regime(text, response.proposals)
         raw = getattr(response, "content", response)
         if isinstance(raw, str):
             raw = json.loads(raw)
         if isinstance(raw, list):
             raw = {"proposals": raw}
-        return ExtractionBatch.model_validate(raw).proposals
+        parsed = ExtractionBatch.model_validate(raw)
+        return self._fill_missing_explicit_regime(text, parsed.proposals)
