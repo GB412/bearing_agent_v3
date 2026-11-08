@@ -12,10 +12,10 @@ from bearing_agents.requirements.evidence import claim_context
 _NUM = r"([0-9]+(?:\.[0-9]+)?)"
 _PATTERNS = (
     ("journal_diameter",
-     rf"(?:轴径|轴颈直径|D\s*=)\s*[:：=]?\s*(?:是|为)?\s*{_NUM}\s*(mm|毫米|m|米)(?![A-Za-z])"),
+     rf"(?:轴径|轴颈直径|D\s*=)\s*[:：=]?\s*(?:是|为)?\s*(?:大约|大概|估计|约为|约)?\s*{_NUM}\s*(mm|毫米|m|米)(?![A-Za-z])"),
     ("load",
      rf"(?:径向载荷|轴承载荷|载荷|F\s*=)\s*[:：=]?\s*"
-     rf"(?:后来查到了[，,]?\s*)?(?:是|为)?\s*{_NUM}\s*(kN|N|千牛)(?![A-Za-z])"),
+     rf"(?:后来查到了[，,]?\s*)?(?:是|为)?\s*(?:大约|大概|估计|约为|约)?\s*{_NUM}\s*(kN|N|千牛)(?![A-Za-z])"),
     ("rotational_speed",
      rf"(?:转速|n\s*=)\s*[:：=]?\s*(?:是|为)?\s*"
      rf"{_NUM}\s*(r/min|rpm|转/分)(?![A-Za-z])"),
@@ -35,7 +35,7 @@ def extract(text: str) -> list[RequirementProposal]:
         for match in re.finditer(expression, text, flags=re.I):
             quote = match.group()
             context = claim_context(text, match.start(), match.end())
-            uncertain = ("估计", "大概", "大约", "不确定", "左右", "约为")
+            uncertain = ("估计", "大概", "大约", "不确定", "左右", "约为", "约")
             modality = "UNCERTAIN" if any(t in context for t in uncertain) else "EXPLICIT"
             if any(t in context for t in ("不是", "不对", "并非", "不要", "错了", "错误")):
                 modality = "NEGATED"
