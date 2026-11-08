@@ -126,7 +126,10 @@ def display(application, design_id: str, execution=None, *, view=None) -> None:
         f"R2就绪={view.input_ready} | 轴承类型={view.scope}"
     )
     for key, record in sorted(state.parameters.items()):
-        print(f"  参数 {key}: {record.value} {record.unit} [{record.status.value}]")
+        print(
+            f"  参数 {key} (v{record.revision}): {record.value} {record.unit} "
+            f"[{record.status.value}]; 来源已记录={bool(record.verified_source_ref)}"
+        )
     for case in state.operating_cases:
         print(
             f"  工况 {case.case_id}: 单一稳态={case.is_steady_state}; "
@@ -136,7 +139,7 @@ def display(application, design_id: str, execution=None, *, view=None) -> None:
         print(
             f"  约束 {item.id} (v{item.revision}): "
             f"{item.parameter} {item.operator.value} {item.target} {item.unit}; "
-            f"approved={item.approved}"
+            f"severity={item.severity.value}; approved={item.approved}"
         )
     for candidate in state.candidate_designs:
         print(
