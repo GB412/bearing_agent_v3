@@ -185,7 +185,8 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     # Fail before creating a session if real model config is missing or invalid.
     planner = LLMPlanner() if args.llm else None
-    extractor = LLMExtractor.from_environment().extract if args.llm else None
+    extractor_instance = LLMExtractor.from_environment() if args.llm else None
+    extractor = extractor_instance.extract if extractor_instance else None
     args.db.parent.mkdir(parents=True, exist_ok=True)
     checkpoint = args.checkpoint or args.db.with_suffix(".checkpoint.sqlite")
     checkpoint.parent.mkdir(parents=True, exist_ok=True)
@@ -278,6 +279,14 @@ def main(argv=None) -> int:
                         design_id, user_text, str(uuid4()), goal="design",
                     )
                     last_execution = turn.execution
+                    if extractor_instance and extractor_instance.last_recovery:
+                        detail = extractor_instance.last_recovery
+                        print(
+                            "提取提示：模型返回了 "
+                            f"{detail['invalid_proposals']} 条格式不符的提案，"
+                            f"已从用户原文安全恢复 {detail['recovered_from_text']} 条；"
+                            "所有提案仍需原文证据核验。"
+                        )
                 display(application, design_id, last_execution)
                 shown_options = guided_options(manager.get_design(design_id))
             except (ValueError, PermissionError, KeyError, RuntimeError) as exc:
