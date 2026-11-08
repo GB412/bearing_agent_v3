@@ -2,8 +2,9 @@
 
 import builtins
 
-from bearing_agents.requirements.contracts import RequirementProposal
 from examples import interactive_design
+
+from bearing_agents.requirements.contracts import RequirementProposal
 
 
 def test_intake_only_writes_complete_state_without_supervisor(tmp_path, monkeypatch, capsys):
