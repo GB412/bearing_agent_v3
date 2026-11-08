@@ -91,8 +91,13 @@ def verify(text: str, proposal: RequirementProposal, registry: ParameterSchemaRe
             return result("REJECT", "SCOPE_CONFLICT")
         return result("ACCEPT", "VALIDATED", proposal.value)
     if proposal.kind == "steady_state":
-        expected = {"steady": "true", "dynamic": "false"}.get(proposal.field_id)
-        if expected != proposal.value:
+        expected = {"steady": True, "dynamic": False}.get(proposal.field_id)
+        actual = (
+            proposal.value if isinstance(proposal.value, bool)
+            else str(proposal.value).lower() == "true"
+            if str(proposal.value).lower() in {"true", "false"} else None
+        )
+        if expected is None or expected != actual:
             return result("REJECT", "STEADY_MISMATCH")
         if not any(word in text for word in ("稳态", "稳定", "恒定", "动态", "工况")):
             return result("CLARIFY", "REGIME_NOT_STATED")
