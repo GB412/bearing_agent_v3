@@ -7,6 +7,7 @@ import re
 from pydantic import BaseModel, ConfigDict, Field
 
 from bearing_agents.requirements.contracts import RequirementProposal
+from bearing_agents.requirements.evidence import claim_context
 
 _NUM = r"([0-9]+(?:\.[0-9]+)?)"
 _PATTERNS = (
@@ -33,8 +34,7 @@ def extract(text: str) -> list[RequirementProposal]:
     for field, expression in _PATTERNS:
         for match in re.finditer(expression, text, flags=re.I):
             quote = match.group()
-            prefix = text[max(0, match.start()-15):match.start()]
-            context = prefix + quote + text[match.end():min(len(text), match.end()+6)]
+            context = claim_context(text, match.start(), match.end())
             uncertain = ("估计", "大概", "大约", "不确定", "左右", "约为")
             modality = "UNCERTAIN" if any(t in context for t in uncertain) else "EXPLICIT"
             if any(t in context for t in ("不是", "不对", "并非", "不要", "错了", "错误")):
