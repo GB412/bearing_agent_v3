@@ -177,7 +177,7 @@ class LLMExtractor:
             "or radial_clearance; include numeric value and unit. Scope uses "
             "field_id supported or unsupported and value "
             "cylindrical_radial_hydrodynamic or unsupported. Steady-state uses "
-            "field_id steady/dynamic and value true/false as STRINGS. "
+            "field_id steady/dynamic and value true/false (boolean or string). "
             "Constraints and preferences can use bearing_width (LE) or "
             "material (IN/NOT_IN). '最好' expresses a preference, not an "
             "approved hard constraint. Modality MUST be EXPLICIT, UNCERTAIN, "
