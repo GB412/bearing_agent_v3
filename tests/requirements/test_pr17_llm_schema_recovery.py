@@ -110,3 +110,20 @@ def test_oversized_raw_proposal_batch_is_rejected():
     with pytest.raises(ValueError, match="JSON envelope invalid"):
         extractor.extract("轴径100mm")
     assert extractor.last_recovery is None
+
+
+@pytest.mark.parametrize(("text", "accepted"), [
+    ("载荷大约12kN，轴径100mm", {"journal_diameter"}),
+    ("轴径100mm，载荷大约12kN", {"journal_diameter"}),
+    ("载荷12kN，不确定，轴径100mm", {"journal_diameter"}),
+    ("载荷12kN，不确定", set()),
+    ("轴径100mm，我还不确定", set()),
+])
+def test_uncertainty_is_scoped_to_claims_not_neighboring_fields(
+    tmp_path, text, accepted,
+):
+    manager = StateManager(SQLiteStateRepository(tmp_path / "clauses.sqlite"))
+    interaction = InteractionService(manager, actor="engineer")
+    design = interaction.create_design()
+    interaction.submit_turn(design.design_id, text, "user-turn")
+    assert set(manager.get_design(design.design_id).parameters) == accepted
