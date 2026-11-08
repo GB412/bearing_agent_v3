@@ -102,7 +102,10 @@ def verify(text: str, proposal: RequirementProposal, registry: ParameterSchemaRe
         if not any(word in text for word in ("稳态", "稳定", "恒定", "动态", "工况")):
             return result("CLARIFY", "REGIME_NOT_STATED")
         matches = _known_claims(text, proposal)
-        if matches and any(item.value != proposal.value for item in matches):
+        if matches and any(
+            (item.value is True or item.value == "true") != actual
+            for item in matches
+        ):
             return result("REJECT", "REGIME_CONFLICT")
         return result("ACCEPT", "VALIDATED", proposal.value)
 
