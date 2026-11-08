@@ -16,6 +16,24 @@ _UNCERTAIN = ("估计", "大约", "大概", "可能", "不确定", "左右", "�
 _SCOPE = {"supported":"cylindrical_radial_hydrodynamic","unsupported":"unsupported"}
 
 
+def claim_context(text: str, start: int, end: int) -> str:
+    """Find the relevant local phrase without leaking another field's uncertainty."""
+    # Preserve standalone trailing qualifiers such as "载荷12kN，不确定".
+    left = re.split(r"[，,。；;！？!?\n]", text[max(0, start-14):start])[-1]
+    right = text[end:min(len(text), end+16)]
+    right_parts = re.split(r"[，,。；;！？!?\n]", right, maxsplit=1)
+    trailing = right_parts[1].lstrip() if len(right_parts) > 1 else ""
+    qualifier_heads = (
+        "不确定", "我还不确定", "可能", "估计", "大约", "大概",
+        "不是", "不对", "错了", "错误", "刚才说错", "说错了",
+        "更正", "改成", "改为",
+    )
+    context = left + text[start:end] + right_parts[0]
+    if trailing.startswith(qualifier_heads):
+        context += trailing[:9]
+    return context
+
+
 def verify(text: str, proposal: RequirementProposal, registry: ParameterSchemaRegistry
            ) -> VerifiedRequirement:
     def decision(code: str, reason: str, value=None, unit=None):
@@ -29,21 +47,7 @@ def verify(text: str, proposal: RequirementProposal, registry: ParameterSchemaRe
         return decision("REJECT", "QUOTE_MISMATCH")
     if proposal.modality != "EXPLICIT":
         return decision("CLARIFY", "NOT_EXPLICIT")
-    # Keep qualifiers tied to this claim, not a preceding/following field.
-    # A standalone trailing clause such as "载荷12kN，不确定" still qualifies
-    # the immediately preceding value and must not be accepted as explicit.
-    left = re.split(r"[，,。；;！？!?\n]", text[max(0, proposal.start-14):proposal.start])[-1]
-    right = text[proposal.end:min(len(text), proposal.end+16)]
-    right_parts = re.split(r"[，,。；;！？!?\n]", right, maxsplit=1)
-    trailing = right_parts[1].lstrip() if len(right_parts) > 1 else ""
-    qualifier_heads = (
-        "不确定", "我还不确定", "可能", "估计", "大约", "大概",
-        "不是", "不对", "错了", "错误", "刚才说错", "说错了",
-        "更正", "改成", "改为",
-    )
-    context = left + quote + right_parts[0]
-    if trailing.startswith(qualifier_heads):
-        context += trailing[:9]
+    context = claim_context(text, proposal.start, proposal.end)
     if any(marker in context for marker in _NEGATED+_UNCERTAIN):
         return decision("CLARIFY", "NEGATED_OR_UNCERTAIN")
     if proposal.kind == "scope":
