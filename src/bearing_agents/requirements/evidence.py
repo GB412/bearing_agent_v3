@@ -93,8 +93,8 @@ def verify(text: str, proposal: RequirementProposal, registry: ParameterSchemaRe
         if unit not in UNITS:
             return decision("CLARIFY","UNKNOWN_OR_MISSING_UNIT")
         suffix=quote[quote.find(nums[0])+len(nums[0]):].strip()
-        aliases={"mm":("mm","毫米"),"m":("m","米"),"kN":("kN",),"N":("N",),
-                 "rpm":("rpm","r/min")}
+        aliases={"mm":("mm","毫米"),"m":("m","米"),"kN":("kN","千牛"),"N":("N",),
+                 "rpm":("rpm","r/min","转/分")}
         if suffix not in aliases.get(unit,()):
             return decision("REJECT","UNIT_MISMATCH")
         target=_CANONICAL_UNIT[proposal.field_id]
