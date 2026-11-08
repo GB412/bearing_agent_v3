@@ -181,3 +181,18 @@ def test_oversized_json_envelope_cannot_be_partially_applied():
     extractor = LLMExtractor(SimpleNamespace(invoke=lambda _: raw))
     with pytest.raises(ValueError, match="envelope invalid"):
         extractor.extract("轴径100mm")
+
+
+def test_native_json_boolean_steady_state_is_not_mistaken_for_dynamic(tmp_path):
+    text = "圆柱径向动压滑动轴承，轴径100mm，载荷12kN，转速1500rpm，单稳态"
+    items = [
+        {"kind": "scope", "field_id": "supported",
+         "value": "cylindrical_radial_hydrodynamic"},
+        {"kind": "steady_state", "field_id": "steady", "value": True},
+    ]
+    _, manager, service, design = _rig(tmp_path, items)
+    _, view = service.submit_turn(design.design_id, text, "boolean-regime")
+    assert view.input_ready
+    state = manager.get_design(design.design_id)
+    assert state.operating_cases[0].is_steady_state is True
+    assert state.target_scope == "cylindrical_radial_hydrodynamic"
