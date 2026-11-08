@@ -127,3 +127,75 @@ def test_uncertainty_is_scoped_to_claims_not_neighboring_fields(
     design = interaction.create_design()
     interaction.submit_turn(design.design_id, text, "user-turn")
     assert set(manager.get_design(design.design_id).parameters) == accepted
+
+
+def test_valid_llm_json_omitting_scope_and_steady_is_safely_completed(tmp_path):
+    text = (
+        "先按油润滑圆柱径向动压滑动轴承考虑。"
+        "轴径100mm，载荷12kN，转速1500rpm，单一稳态。"
+    )
+    # Model returns a valid envelope but omits two explicit engineering facts.
+    model = SimpleNamespace(invoke=lambda _: {
+        "parsed": {"proposals": []},
+        "raw": SimpleNamespace(content='{"proposals": []}'),
+        "parsing_error": None,
+    })
+    extractor = LLMExtractor(model)
+    manager = StateManager(SQLiteStateRepository(tmp_path / "omission.sqlite"))
+    interaction = InteractionService(
+        manager, actor="engineer", extractor=extractor.extract,
+    )
+    design = interaction.create_design()
+    _, view = interaction.submit_turn(design.design_id, text, "omitted")
+    state = manager.get_design(design.design_id)
+    assert state.target_scope == "cylindrical_radial_hydrodynamic"
+    assert state.operating_cases[0].is_steady_state is True
+    assert state.operating_cases[0].verified_source_ref
+    # Missing parameter proposals must not be fabricated as model facts.
+    assert state.parameters == {}
+    assert not view.input_ready
+    assert extractor.last_recovery == {
+        "invalid_proposals": 0, "recovered_from_text": 2,
+    }
+
+
+def test_valid_llm_batch_and_deterministic_scope_not_duplicated(tmp_path):
+    text = "圆柱径向动压滑动轴承，单一稳态"
+    payload = {"proposals": [
+        _spanned(
+            text, "圆柱径向动压", kind="scope", field_id="supported",
+            value="cylindrical_radial_hydrodynamic",
+        )
+    ]}
+    model = SimpleNamespace(invoke=lambda _: {
+        "parsed": payload,
+        "raw": SimpleNamespace(content=json.dumps(payload, ensure_ascii=False)),
+        "parsing_error": None,
+    })
+    extractor = LLMExtractor(model)
+    proposals = extractor.extract(text)
+    assert [p.kind for p in proposals].count("scope") == 1
+    assert [p.kind for p in proposals].count("steady_state") == 1
+    assert extractor.last_recovery == {
+        "invalid_proposals": 0, "recovered_from_text": 1,
+    }
+
+
+def test_no_steady_case_is_created_when_user_never_stated_one(tmp_path):
+    text = "帮我设计一个齿轮箱滑动轴承"
+    model = SimpleNamespace(invoke=lambda _: {
+        "parsed": {"proposals": []},
+        "raw": SimpleNamespace(content='{"proposals": []}'),
+        "parsing_error": None,
+    })
+    extractor = LLMExtractor(model)
+    manager = StateManager(SQLiteStateRepository(tmp_path / "absent.sqlite"))
+    interaction = InteractionService(
+        manager, actor="engineer", extractor=extractor.extract,
+    )
+    design = interaction.create_design()
+    interaction.submit_turn(design.design_id, text, "unknown")
+    state = manager.get_design(design.design_id)
+    assert state.target_scope == "unknown"
+    assert state.operating_cases == []
+    assert extractor.last_recovery is None
