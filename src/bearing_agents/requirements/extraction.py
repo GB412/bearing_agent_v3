@@ -113,6 +113,8 @@ class LLMExtractor:
 
     def __init__(self, model):
         self.model = model
+        # Set only if model JSON had proposals with invalid schemas.
+        self.last_recovery: dict[str, int] | None = None
 
     @classmethod
     def from_environment(cls):
@@ -137,24 +139,84 @@ class LLMExtractor:
         ).with_structured_output(ExtractionBatch,method="json_mode",include_raw=True)
         return cls(client)
 
+    def _recover_invalid_items(self, response: dict, text: str) -> list[RequirementProposal]:
+        """Recover from valid model JSON only, never coerce unknown proposal types.
+
+        Retained model items and exact-pattern suggestions from the user's
+        original text must still pass the trusted EvidenceVerifier.
+        """
+        raw = response.get("raw")
+        content = getattr(raw, "content", raw)
+        if not isinstance(content, str):
+            raise ValueError("Real extractor structured parsing failed")
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Real extractor JSON response invalid") from exc
+        if (
+            not isinstance(payload, dict)
+            or set(payload) != {"proposals"}
+            or not isinstance(payload["proposals"], list)
+            or len(payload["proposals"]) > 24
+        ):
+            raise ValueError("Real extractor JSON envelope invalid")
+        valid: list[RequirementProposal] = []
+        rejected = 0
+        for item in payload["proposals"]:
+            try:
+                valid.append(RequirementProposal.model_validate(item))
+            except ValueError:
+                rejected += 1
+        if not rejected:
+            raise ValueError("Real extractor structured parsing failed")
+        valid_keys = {(item.kind, item.field_id) for item in valid}
+        # Do not suppress multiple deterministic claims for the same field;
+        # InteractionService must resolve ambiguity, never select the last.
+        recovered = [
+            item for item in extract(text)
+            if (item.kind, item.field_id) not in valid_keys
+        ]
+        if not valid and not recovered:
+            raise ValueError("Real extractor had no safe proposals to recover")
+        self.last_recovery = {
+            "invalid_proposals": rejected,
+            "recovered_from_text": len(recovered),
+        }
+        return [*valid, *recovered]
+
     def extract(self, text: str) -> list[RequirementProposal]:
+        self.last_recovery = None
         response = self.model.invoke(
-            "Extract only explicit bearing facts and constraints. Return a JSON object "
-            "with the key proposals containing a list of items. Each item must contain "
-            "kind, field_id, quote, start, end and (if present) value, unit, modality, "
-            "operator. The start/end are Python string character indices in the "
-            "original message. Do not infer missing fields. Never include message_id, "
-            "actor, confirmation or verified source fields. User message: " + repr(text)
+            "Extract ONLY explicit user-stated bearing facts as JSON: "
+            'an object with the single key "proposals" and a list (possibly empty). '
+            "No markdown. Every proposal MUST use kind exactly one of: "
+            "parameter, scope, steady_state, constraint. "
+            "Use kind=parameter for numeric fields journal_diameter, load, "
+            "rotational_speed, bearing_width, radial_clearance. "
+            "Use kind=scope with field_id=supported or unsupported. "
+            "Use kind=steady_state with field_id=steady or dynamic. "
+            "Use kind=constraint for explicit width/material restrictions only. "
+            "Every item requires kind, field_id, quote, start, end. Quote must be "
+            "an exact substring of the original user message, with Python "
+            "0-based character positions and end exclusive. Include value, "
+            "unit, modality, operator when appropriate. Modality MUST be "
+            "EXPLICIT, UNCERTAIN, NEGATED or AMBIGUOUS. "
+            "Do not invent absent values, including unknown loads. "
+            "Never provide message_id, actor, approval, confirmation, or provenance. "
+            "Example proposal: "
+            '{"kind":"parameter","field_id":"journal_diameter","quote":"轴径100mm",'
+            '"start":0,"end":7,"value":100,"unit":"mm","modality":"EXPLICIT"}. '
+            "User message: " + repr(text)
         )
-        if isinstance(response,dict) and "raw" in response and "parsed" in response:
+        if isinstance(response, dict) and "raw" in response and "parsed" in response:
             if response.get("parsing_error") is not None:
-                raise ValueError("Real extractor structured parsing failed")
+                return self._recover_invalid_items(response, text)
             response = response["parsed"]
-        if isinstance(response,ExtractionBatch):
+        if isinstance(response, ExtractionBatch):
             return response.proposals
         raw = getattr(response, "content", response)
-        if isinstance(raw,str):
+        if isinstance(raw, str):
             raw = json.loads(raw)
-        if isinstance(raw,list):
-            raw = {"proposals":raw}
+        if isinstance(raw, list):
+            raw = {"proposals": raw}
         return ExtractionBatch.model_validate(raw).proposals
