@@ -30,7 +30,7 @@ class RequirementProposal(BaseModel):
 
     kind: Literal["parameter", "steady_state", "scope", "constraint", "preference"]
     field_id: str
-    value: float | str | None = None
+    value: float | str | bool | None = None
     unit: str | None = None
     modality: Literal[
         "EXPLICIT", "UNCERTAIN", "NEGATED", "AMBIGUOUS", "UNKNOWN", "CORRECTION"
