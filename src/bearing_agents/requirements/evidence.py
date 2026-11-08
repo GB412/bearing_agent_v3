@@ -1,4 +1,8 @@
-"""Deterministic verification of model-owned spans, values and units."""
+"""Lightweight semantic and engineering validation of typed LLM proposals.
+
+Source identity comes from the authenticated interaction, not the model.
+No character offsets, quote matching, or model-granted approval authority.
+"""
 
 import re
 
@@ -10,119 +14,154 @@ _CANONICAL_UNIT = {
     "journal_diameter": "mm", "load": "N", "rotational_speed": "rpm",
     "bearing_width": "mm", "radial_clearance": "mm",
 }
-_SAFE_NUMBER = re.compile(r"(?<![\d.])\d+(?:\.\d+)?(?![\d.])")
-_NEGATED = ("不是", "不对", "不要", "并非", "错误", "错了", "改成", "改为", "更正")
-_UNCERTAIN = ("估计", "大约", "大概", "可能", "不确定", "左右", "约为", "猜")
-_SCOPE = {"supported":"cylindrical_radial_hydrodynamic","unsupported":"unsupported"}
+_SCOPE = {"supported": "cylindrical_radial_hydrodynamic", "unsupported": "unsupported"}
+_UNIT_ALIASES = {
+    "毫米": "mm", "米": "m", "千牛": "kN", "转/分": "rpm", "r/min": "rpm",
+}
+_FIELD_WORDS = {
+    "journal_diameter": ("轴径", "轴颈", "D="),
+    "load": ("载荷", "F="),
+    "rotational_speed": ("转速", "n="),
+    "bearing_width": ("宽度",),
+    "radial_clearance": ("间隙",),
+}
+_UNIT_WORDS = {
+    "mm": ("mm", "毫米"), "m": ("米", " m"),
+    "N": (" N", "牛"), "kN": ("kN", "千牛"),
+    "rpm": ("rpm", "r/min", "转/分"),
+}
+_UNCERTAIN = ("估计", "大概", "大约", "不确定", "左右", "约为")
+_NEGATED = ("不是", "不对", "并非", "不要", "错了", "错误", "更正", "改成", "改为")
 
 
 def claim_context(text: str, start: int, end: int) -> str:
-    """Find the relevant local phrase without leaking another field's uncertainty."""
-    # Preserve standalone trailing qualifiers such as "载荷12kN，不确定".
+    """Find a local clause for the *offline* deterministic pattern extractor."""
     left = re.split(r"[，,。；;！？!?\n]", text[max(0, start-14):start])[-1]
     right = text[end:min(len(text), end+16)]
-    right_parts = re.split(r"[，,。；;！？!?\n]", right, maxsplit=1)
-    trailing = right_parts[1].lstrip() if len(right_parts) > 1 else ""
-    qualifier_heads = (
-        "不确定", "我还不确定", "可能", "估计", "大约", "大概",
-        "不是", "不对", "错了", "错误", "刚才说错", "说错了",
-        "更正", "改成", "改为",
-    )
-    context = left + text[start:end] + right_parts[0]
-    if trailing.startswith(qualifier_heads):
-        context += trailing[:9]
+    parts = re.split(r"[，,。；;！？!?\n]", right, maxsplit=1)
+    trailer = parts[1].lstrip() if len(parts) > 1 else ""
+    context = left + text[start:end] + parts[0]
+    if trailer.startswith(("不确定", "我还不确定", "可能", "不是", "不对", "错了")):
+        context += trailer[:9]
     return context
+
+
+def _normalize_value(field: str, value: float, unit: str,
+                     registry: ParameterSchemaRegistry) -> tuple[float, str]:
+    unit = _UNIT_ALIASES.get(unit, unit)
+    target = _CANONICAL_UNIT[field]
+    schema = registry.get(field)
+    if schema is None or schema.dimension is None or unit not in UNITS:
+        raise ValueError("Unrecognized engineering dimension or unit")
+    base_value, _ = normalize(value, unit, schema.dimension)
+    base_target, _ = normalize(1.0, target, schema.dimension)
+    normalized = base_value / base_target
+    registry.validate(field, normalized, target)
+    return normalized, target
+
+
+def _known_claims(text: str, proposal: RequirementProposal):
+    # Pattern-based checks are a simple consistency safeguard for recognized
+    # expressions; no model-created character spans are checked or trusted.
+    from bearing_agents.requirements.extraction import extract
+
+    return [
+        item for item in extract(text)
+        if item.kind == proposal.kind and item.field_id == proposal.field_id
+    ]
 
 
 def verify(text: str, proposal: RequirementProposal, registry: ParameterSchemaRegistry
            ) -> VerifiedRequirement:
-    def decision(code: str, reason: str, value=None, unit=None):
-        return VerifiedRequirement(proposal=proposal,decision=code,reason=reason,
-                                   normalized_value=value,normalized_unit=unit)
+    def result(code: str, reason: str, value=None, unit=None):
+        return VerifiedRequirement(
+            proposal=proposal, decision=code, reason=reason,
+            normalized_value=value, normalized_unit=unit,
+        )
 
-    if proposal.end > len(text) or proposal.start >= proposal.end:
-        return decision("REJECT", "SPAN_OUT_OF_RANGE")
-    quote = text[proposal.start:proposal.end]
-    if quote != proposal.quote:
-        return decision("REJECT", "QUOTE_MISMATCH")
     if proposal.modality != "EXPLICIT":
-        return decision("CLARIFY", "NOT_EXPLICIT")
-    context = claim_context(text, proposal.start, proposal.end)
-    if any(marker in context for marker in _NEGATED+_UNCERTAIN):
-        return decision("CLARIFY", "NEGATED_OR_UNCERTAIN")
+        return result("CLARIFY", "NOT_EXPLICIT")
     if proposal.kind == "scope":
         if _SCOPE.get(proposal.field_id) != proposal.value:
-            return decision("REJECT", "SCOPE_MISMATCH")
-        expected = "滚动" if proposal.field_id == "unsupported" else "滑动"
-        if expected not in quote and not any(
-            tag in quote for tag in ("可倾瓦", "静压", "圆柱径向动压", "球轴承", "滚子轴承")
-        ):
-            return decision("CLARIFY", "SCOPE_AMBIGUOUS")
-        return decision("ACCEPT","VERIFIED",proposal.value)
+            return result("REJECT", "SCOPE_MISMATCH")
+        if not any(x in text for x in ("轴承", "可倾瓦", "静压")):
+            return result("CLARIFY", "SCOPE_NOT_STATED")
+        matches = _known_claims(text, proposal)
+        if matches and any(item.value != proposal.value for item in matches):
+            return result("REJECT", "SCOPE_CONFLICT")
+        return result("ACCEPT", "VALIDATED", proposal.value)
     if proposal.kind == "steady_state":
-        if proposal.field_id == "dynamic" and proposal.value == "false":
-            return decision("ACCEPT","VERIFIED","false")
-        if proposal.field_id == "steady" and proposal.value == "true":
-            return decision("ACCEPT","VERIFIED","true")
-        return decision("REJECT","STEADY_MISMATCH")
-    if proposal.kind not in {"parameter","constraint"}:
-        return decision("REJECT","UNSUPPORTED_KIND")
-    if proposal.kind == "constraint" and proposal.field_id == "material":
-        value = proposal.value
-        if not isinstance(value, str) or not value.strip() or proposal.unit != "1":
-            return decision("REJECT", "MATERIAL_VALUE_INVALID")
-        if not quote.endswith(value):
-            return decision("REJECT", "MATERIAL_QUOTE_MISMATCH")
-        if proposal.operator == "NOT_IN":
-            prefixes = ("不能用", "禁止使用", "不得使用")
-        elif proposal.operator == "IN":
-            prefixes = ("材料只允许", "材料仅允许", "材料必须使用")
-        else:
-            return decision("REJECT", "MATERIAL_OPERATOR_INVALID")
-        if not any(quote.startswith(prefix) for prefix in prefixes):
-            return decision("REJECT", "MATERIAL_SEMANTICS_MISMATCH")
-        registry.validate("material", value, "1")
-        return decision("ACCEPT", "VERIFIED", value, "1")
-    if proposal.kind == "constraint":
+        expected = {"steady": "true", "dynamic": "false"}.get(proposal.field_id)
+        if expected != proposal.value:
+            return result("REJECT", "STEADY_MISMATCH")
+        if not any(word in text for word in ("稳态", "稳定", "恒定", "动态", "工况")):
+            return result("CLARIFY", "REGIME_NOT_STATED")
+        matches = _known_claims(text, proposal)
+        if matches and any(item.value != proposal.value for item in matches):
+            return result("REJECT", "REGIME_CONFLICT")
+        return result("ACCEPT", "VALIDATED", proposal.value)
+
+    if proposal.kind not in {"parameter", "constraint", "preference"}:
+        return result("REJECT", "UNSUPPORTED_KIND")
+    if proposal.kind in {"constraint", "preference"}:
+        if proposal.field_id == "material":
+            if proposal.operator not in {"IN", "NOT_IN"}:
+                return result("REJECT", "MATERIAL_OPERATOR_INVALID")
+            if not isinstance(proposal.value, str) or not proposal.value.strip():
+                return result("REJECT", "MATERIAL_VALUE_INVALID")
+            if not any(x in text for x in ("材料", "不能用", "禁止", "不得使用")):
+                return result("CLARIFY", "MATERIAL_NOT_STATED")
+            try:
+                registry.validate("material", proposal.value, "1")
+            except ValueError:
+                return result("REJECT", "MATERIAL_VALUE_INVALID")
+            return result("ACCEPT", "VALIDATED", proposal.value, "1")
         if proposal.field_id != "bearing_width" or proposal.operator != "LE":
-            return decision("CLARIFY", "CONSTRAINT_UNSUPPORTED")
-        if not any(p in quote for p in ("不超过","不能超过","小于等于","≤")):
-            return decision("REJECT","CONSTRAINT_SEMANTICS_MISMATCH")
-    elif proposal.field_id not in {
-        "journal_diameter", "load", "rotational_speed",
-        "bearing_width", "radial_clearance",
-    }:
-        return decision("CLARIFY","UNKNOWN_INPUT_FIELD")
-    else:
-        tokens={"journal_diameter":("轴径","轴颈直径","D="),
-                "load":("载荷","F="),
-                "rotational_speed":("转速","n="),
-                "bearing_width":("轴承宽度", "宽度"),
-                "radial_clearance":("径向间隙", "半径间隙")}[proposal.field_id]
-        if not any(t in quote for t in tokens):
-            return decision("REJECT","FIELD_MISMATCH")
-    nums=_SAFE_NUMBER.findall(quote)
-    if len(nums)!=1 or not isinstance(proposal.value,(int,float)):
-        return decision("CLARIFY","NUMERIC_AMBIGUITY")
+            return result("CLARIFY", "CONSTRAINT_UNSUPPORTED")
+        if proposal.kind == "constraint" and any(
+            mark in text for mark in ("最好", "尽量", "希望")
+        ) and not any(mark in text for mark in ("必须", "硬性", "强制")):
+            return result("CLARIFY", "SOFT_PREFERENCE_NOT_HARD_CONSTRAINT")
+        if not any(word in text for word in ("宽度", "安装空间")):
+            return result("CLARIFY", "CONSTRAINT_NOT_STATED")
+    elif proposal.field_id not in _CANONICAL_UNIT:
+        return result("CLARIFY", "UNKNOWN_INPUT_FIELD")
+
+    field = proposal.field_id
+    if not isinstance(proposal.value, (int, float)) or isinstance(proposal.value, bool):
+        return result("CLARIFY", "VALUE_NOT_NUMERIC")
+    if not proposal.unit:
+        return result("CLARIFY", "UNIT_MISSING")
+    if not any(word in text for word in _FIELD_WORDS[field]):
+        return result("CLARIFY", "FIELD_NOT_STATED")
+    if not any(word in text for word in _UNIT_WORDS.get(
+        _UNIT_ALIASES.get(proposal.unit, proposal.unit), ()
+    )):
+        return result("CLARIFY", "UNIT_NOT_STATED")
     try:
-        if float(nums[0]) != float(proposal.value):
-            return decision("REJECT","VALUE_MISMATCH")
-        unit=proposal.unit
-        if unit not in UNITS:
-            return decision("CLARIFY","UNKNOWN_OR_MISSING_UNIT")
-        suffix=quote[quote.find(nums[0])+len(nums[0]):].strip()
-        aliases={"mm":("mm","毫米"),"m":("m","米"),"kN":("kN","千牛"),"N":("N",),
-                 "rpm":("rpm","r/min","转/分")}
-        if suffix not in aliases.get(unit,()):
-            return decision("REJECT","UNIT_MISMATCH")
-        target=_CANONICAL_UNIT[proposal.field_id]
-        schema=registry.get(proposal.field_id)
-        if schema is None or schema.dimension is None:
-            return decision("REJECT","NO_PARAMETER_SCHEMA")
-        base_value,base_unit=normalize(float(proposal.value),unit,schema.dimension)
-        base_target,_=normalize(1.0,target,schema.dimension)
-        value=base_value/base_target
-        registry.validate(proposal.field_id,value,target)
-    except (ValueError,TypeError,KeyError) as exc:
-        return decision("REJECT",type(exc).__name__)
-    return decision("ACCEPT","VERIFIED",value,target)
+        value, unit = _normalize_value(
+            field, float(proposal.value), proposal.unit, registry,
+        )
+    except (ValueError, TypeError, KeyError):
+        return result("REJECT", "INVALID_ENGINEERING_VALUE")
+
+    claims = _known_claims(text, proposal)
+    if claims:
+        if any(item.modality != "EXPLICIT" for item in claims):
+            return result("CLARIFY", "UNCONFIRMED_INPUT")
+        try:
+            known = [
+                _normalize_value(field, float(item.value), item.unit, registry)
+                for item in claims
+            ]
+        except (ValueError, TypeError, KeyError):
+            return result("CLARIFY", "KNOWN_INPUT_INVALID")
+        if any(abs(item[0] - value) > max(1e-8, abs(value)*1e-9)
+               or item[1] != unit for item in known):
+            return result("REJECT", "KNOWN_VALUE_CONFLICT")
+    else:
+        # An LLM may understand a phrasing the patterns missed, but a declared
+        # absent/unknown input must not turn into a verified numeric value.
+        if any(x in text for x in ("没查到", "还没查", "不知道", "不清楚")):
+            return result("CLARIFY", "UNKNOWN_INPUT")
+    return result("ACCEPT", "VALIDATED", value, unit)
