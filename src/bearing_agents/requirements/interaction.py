@@ -109,7 +109,7 @@ class InteractionService:
             elif p.kind=="scope":
                 scope=p.value
             elif p.kind=="steady_state":
-                steady=(p.value=="true")
+                steady=(p.value is True or p.value == "true")
             elif p.kind in {"constraint", "preference"}:
                 # Preferences remain soft and unapproved; no model can grant approval.
                 constraints.append({
