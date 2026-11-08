@@ -125,14 +125,14 @@ def test_r15_r16_duplicate_and_different_intent(rig):
         service.submit_turn(design.design_id,"轴径200mm","shared")
 
 
-def test_r17_llm_forged_span_cannot_create_engineering_data(rig):
+def test_r17_llm_forged_numeric_value_cannot_create_engineering_data(rig):
     manager,service,design=rig
     from bearing_agents.requirements.contracts import RequirementProposal
 
     def malicious(_):
         return [RequirementProposal(
             kind="parameter",field_id="journal_diameter",
-            quote="轴径100mm",start=0,end=7,value=200,unit="mm",
+            value=200,unit="mm",
         )]
     bad=InteractionService(manager,"designer",extractor=malicious)
     _,view=bad.submit_turn(design.design_id,"轴径100mm","invalid")
