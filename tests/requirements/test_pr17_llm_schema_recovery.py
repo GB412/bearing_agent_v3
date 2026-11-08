@@ -176,7 +176,7 @@ def test_bad_json_and_model_failure_are_not_silently_faked():
 
 def test_oversized_json_envelope_cannot_be_partially_applied():
     raw = {"raw": SimpleNamespace(content=json.dumps(
-        {"proposals": [{"kind": "unknown"}] * 25,
+        {"proposals": [{"kind": "unknown"}] * 25}
     )), "parsed": None, "parsing_error": ValueError("bad")}
     extractor = LLMExtractor(SimpleNamespace(invoke=lambda _: raw))
     with pytest.raises(ValueError, match="envelope invalid"):
